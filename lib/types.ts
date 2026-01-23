@@ -11,6 +11,20 @@ export interface NICEGraphEdge {
   label?: string;
 }
 
+// Condition Evaluator Types
+export type ConditionEvaluator =
+  | { variable: string } // Boolean check
+  | { type: "bp_compare"; variable: string; threshold: string; op: ">=" | ">" | "<=" | "<" | "==" }
+  | { type: "bp_range"; variable: string; systolic_min: number; systolic_max: number; diastolic_min: number; diastolic_max: number }
+  | { type: "age_compare"; variable: string; threshold: number; op: ">=" | ">" | "<=" | "<" | "==" }
+  | { type: "numeric_compare"; variable: string; threshold: number; op: ">=" | ">" | "<=" | "<" | "==" }
+  | { type: "or"; conditions: ConditionEvaluator[] }
+  | { type: "and"; conditions: ConditionEvaluator[] };
+
+export interface ConditionEvaluators {
+  [nodeId: string]: ConditionEvaluator;
+}
+
 export interface NICEGuideline {
   guideline_id: string;
   name: string;
@@ -20,6 +34,7 @@ export interface NICEGuideline {
   rules: string[]; // Array of IF-THEN rule strings
   nodes: NICEGraphNode[];
   edges: NICEGraphEdge[];
+  condition_evaluators?: ConditionEvaluators; // Optional for backwards compatibility
 }
 
 // Legacy Types (for backwards compatibility with existing guidelines)
