@@ -26,7 +26,7 @@
     "harden-react-markdown": "^1.1.5",
     "katex": "^0.16.25",
     "lucide-react": "^0.548.0",
-    "next": "16.0.0",
+    "next": "^16.1.4",
     "openai": "^6.7.0",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^5.4.296",
