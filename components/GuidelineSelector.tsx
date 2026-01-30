@@ -1,14 +1,21 @@
 "use client";
 
 import { useState } from "react";
-import { Guideline } from "@/lib/types";
+import { AnyGuideline, NICEGuideline } from "@/lib/types";
 import { PDF_UPLOAD_CONFIG } from "@/lib/config/pdf-upload";
+import GuidelineViewer from "./GuidelineViewer";
+import { Eye } from "lucide-react";
+
+// Type guard to check if guideline is NICE format
+function isNICEGuideline(guideline: AnyGuideline): guideline is NICEGuideline {
+  return 'rules' in guideline && 'edges' in guideline;
+}
 
 interface GuidelineSelectorProps {
-  guidelines: Guideline[];
-  activeGuideline: Guideline | null;
-  onSelect: (guideline: Guideline) => void;
-  onUpload: (guideline: Guideline) => void;
+  guidelines: AnyGuideline[];
+  activeGuideline: AnyGuideline | null;
+  onSelect: (guideline: AnyGuideline) => void;
+  onUpload: (guideline: AnyGuideline) => void;
 }
 
 export default function GuidelineSelector({
@@ -19,6 +26,7 @@ export default function GuidelineSelector({
 }: GuidelineSelectorProps) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingMessage, setProcessingMessage] = useState("");
+  const [viewerGuideline, setViewerGuideline] = useState<NICEGuideline | null>(null);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -32,12 +40,15 @@ export default function GuidelineSelector({
       reader.onload = (event) => {
         try {
           const guideline = JSON.parse(event.target?.result as string);
-          // Basic validation
+          // Basic validation - check for NICE format or legacy format
+          const isNICE = guideline.rules && guideline.edges;
+          const isLegacy = guideline.inputs && guideline.nodes;
+          
           if (
             !guideline.guideline_id ||
             !guideline.name ||
-            !guideline.inputs ||
-            !guideline.nodes
+            !guideline.nodes ||
+            (!isNICE && !isLegacy)
           ) {
             alert("Invalid guideline format. Please check the JSON structure.");
             return;
@@ -190,31 +201,49 @@ export default function GuidelineSelector({
         ))}
       </div>
       {activeGuideline && (
-        <div className="mt-3 text-xs text-gray-600 flex items-center gap-2">
-          <span className="font-medium">{activeGuideline.version}</span>
-          <span className="text-gray-400">•</span>
-          <a
-            href={activeGuideline.citation_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-600 hover:underline flex items-center gap-1"
-          >
-            <svg
-              className="w-3 h-3"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+        <div className="mt-3 flex items-center justify-between">
+          <div className="text-xs text-gray-600 flex items-center gap-2">
+            <span className="font-medium">{activeGuideline.version}</span>
+            <span className="text-gray-400">•</span>
+            <a
+              href={activeGuideline.citation_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:underline flex items-center gap-1"
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
-            {activeGuideline.citation}
-          </a>
+              <svg
+                className="w-3 h-3"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              {activeGuideline.citation}
+            </a>
+          </div>
+          {isNICEGuideline(activeGuideline) && (
+            <button
+              onClick={() => setViewerGuideline(activeGuideline)}
+              className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              View JSON & Rules
+            </button>
+          )}
         </div>
+      )}
+
+      {viewerGuideline && (
+        <GuidelineViewer
+          guideline={viewerGuideline}
+          onClose={() => setViewerGuideline(null)}
+        />
       )}
     </div>
   );

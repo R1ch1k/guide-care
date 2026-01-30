@@ -1,179 +1,245 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
-import { Guideline, DecisionResult } from '@/lib/types';
+import { Guideline, DecisionResult, NICEGuideline, AnyGuideline } from '@/lib/types';
+
+// Type guard to check if guideline is NICE format
+function isNICEGuideline(guideline: AnyGuideline): guideline is NICEGuideline {
+    return 'rules' in guideline && 'edges' in guideline;
+}
 
 interface ChatRequestBody {
-  messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>;
-  guideline: Guideline;
-  decision: DecisionResult | null;
-  mode: 'strict' | 'explain';
+    messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>;
+    guideline: AnyGuideline;
+    decision: DecisionResult | null;
+    mode: 'strict' | 'explain';
 }
 
 function getOpenAIClient() {
-  const apiKey = process.env.OPENAI_API_KEY;
-  
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY environment variable is not set. Please add it to your environment variables.');
-  }
-  
-  return new OpenAI({
-    apiKey: apiKey,
-  });
+    const apiKey = process.env.OPENAI_API_KEY;
+
+    if (!apiKey) {
+        throw new Error('OPENAI_API_KEY environment variable is not set. Please add it to your environment variables.');
+    }
+
+    return new OpenAI({
+        apiKey: apiKey,
+    });
 }
 
 export async function OPTIONS() {
-  return new NextResponse(null, {
-    status: 204,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    },
-  });
+    return new NextResponse(null, {
+        status: 204,
+        headers: {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type',
+        },
+    });
 }
 
 export async function POST(req: NextRequest) {
-  try {
-    // Check if request has a body
-    const contentType = req.headers.get('content-type');
-    if (!contentType || !contentType.includes('application/json')) {
-      return NextResponse.json(
-        { error: 'Content-Type must be application/json' },
-        { status: 400 }
-      );
-    }
-
-    // Parse and validate request body
-    let body: ChatRequestBody;
     try {
-      body = await req.json();
-    } catch (parseError) {
-      console.error('Failed to parse request body:', parseError);
-      return NextResponse.json(
-        { error: 'Invalid JSON in request body' },
-        { status: 400 }
-      );
-    }
-
-    const { messages, guideline, decision, mode } = body;
-
-    // Validate required fields
-    if (!messages || !Array.isArray(messages)) {
-      return NextResponse.json(
-        { error: 'messages field is required and must be an array' },
-        { status: 400 }
-      );
-    }
-
-    if (!guideline) {
-      return NextResponse.json(
-        { error: 'guideline field is required' },
-        { status: 400 }
-      );
-    }
-
-    if (!mode || (mode !== 'strict' && mode !== 'explain')) {
-      return NextResponse.json(
-        { error: 'mode must be either "strict" or "explain"' },
-        { status: 400 }
-      );
-    }
-
-    // Get OpenAI client (with error handling)
-    const openai = getOpenAIClient();
-
-    // Build system prompt based on mode
-    const systemPrompt = mode === 'strict' 
-      ? buildStrictPrompt(guideline, decision)
-      : buildExplainPrompt(guideline, decision);
-
-    const stream = await openai.chat.completions.create({
-      model: 'gpt-5',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        ...messages
-      ],
-      stream: true,
-    });
-
-    // Create a ReadableStream for SSE (Server-Sent Events)
-    const encoder = new TextEncoder();
-    const readable = new ReadableStream({
-      async start(controller) {
-        try {
-          for await (const chunk of stream) {
-            const content = chunk.choices[0]?.delta?.content || '';
-            if (content) {
-              const data = `data: ${JSON.stringify({ content })}\n\n`;
-              controller.enqueue(encoder.encode(data));
-            }
-          }
-          // Send done signal
-          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-          controller.close();
-        } catch (error) {
-          console.error('Stream error:', error);
-          controller.error(error);
+        // Check if request has a body
+        const contentType = req.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            return NextResponse.json(
+                { error: 'Content-Type must be application/json' },
+                { status: 400 }
+            );
         }
-      },
-    });
 
-    return new Response(readable, {
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-      },
-    });
-  } catch (error) {
-    console.error('OpenAI API error:', error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to process chat request' },
-      { status: 500 }
-    );
-  }
+        // Parse and validate request body
+        let body: ChatRequestBody;
+        try {
+            body = await req.json();
+        } catch (parseError) {
+            console.error('Failed to parse request body:', parseError);
+            return NextResponse.json(
+                { error: 'Invalid JSON in request body' },
+                { status: 400 }
+            );
+        }
+
+        const { messages, guideline, decision, mode } = body;
+
+        // Validate required fields
+        if (!messages || !Array.isArray(messages)) {
+            return NextResponse.json(
+                { error: 'messages field is required and must be an array' },
+                { status: 400 }
+            );
+        }
+
+        if (!guideline) {
+            return NextResponse.json(
+                { error: 'guideline field is required' },
+                { status: 400 }
+            );
+        }
+
+        if (!mode || (mode !== 'strict' && mode !== 'explain')) {
+            return NextResponse.json(
+                { error: 'mode must be either "strict" or "explain"' },
+                { status: 400 }
+            );
+        }
+
+        // Get OpenAI client (with error handling)
+        const openai = getOpenAIClient();
+
+        // Build system prompt based on mode
+        const systemPrompt = mode === 'strict'
+            ? buildStrictPrompt(guideline, decision)
+            : buildExplainPrompt(guideline, decision);
+
+        const stream = await openai.chat.completions.create({
+            model: process.env.OPENAI_MODEL || 'gpt-4o-2024-08-06',
+            messages: [
+                { role: 'system', content: systemPrompt },
+                ...messages
+            ],
+            stream: true,
+        });
+
+        // Create a ReadableStream for SSE (Server-Sent Events)
+        const encoder = new TextEncoder();
+        const readable = new ReadableStream({
+            async start(controller) {
+                try {
+                    for await (const chunk of stream) {
+                        const content = chunk.choices[0]?.delta?.content || '';
+                        if (content) {
+                            const data = `data: ${JSON.stringify({ content })}\n\n`;
+                            controller.enqueue(encoder.encode(data));
+                        }
+                    }
+                    // Send done signal
+                    controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+                    controller.close();
+                } catch (error) {
+                    console.error('Stream error:', error);
+                    controller.error(error);
+                }
+            },
+        });
+
+        return new Response(readable, {
+            headers: {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+            },
+        });
+    } catch (error) {
+        console.error('OpenAI API error:', error);
+        return NextResponse.json(
+            { error: error instanceof Error ? error.message : 'Failed to process chat request' },
+            { status: 500 }
+        );
+    }
 }
 
-function buildStrictPrompt(guideline: Guideline, decision: DecisionResult | null): string {
-  const today = new Date().toLocaleDateString('en-US', { 
-    weekday: 'long', 
-    year: 'numeric', 
-    month: 'long', 
-    day: 'numeric' 
-  });
-  
-  // Format the flowchart structure for the AI (hidden from user)
-  const inputsList = guideline.inputs.map(input => 
-    `  - ${input.id}: "${input.label}" (${input.type}${input.unit ? ', unit: ' + input.unit : ''})`
-  ).join('\n');
-  
-  const nodesList = guideline.nodes.map(node => {
-    let nodeDesc = `  Node "${node.id}":\n`;
-    if (node.if) {
-      nodeDesc += `    Condition: ${node.if}\n`;
-      if (node.then_action) {
-        nodeDesc += `    If TRUE → Action: [${node.then_action.level}] ${node.then_action.text}\n`;
-      }
-      if (node.then && node.then !== '') {
-        nodeDesc += `    If TRUE → Next: ${node.then}\n`;
-      }
-      if (node.else_action) {
-        nodeDesc += `    If FALSE → Action: [${node.else_action.level}] ${node.else_action.text}\n`;
-      }
-      if (node.else && node.else !== '') {
-        nodeDesc += `    If FALSE → Next: ${node.else}\n`;
-      }
+function buildStrictPrompt(guideline: AnyGuideline, decision: DecisionResult | null): string {
+    const today = new Date().toLocaleDateString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+    });
+
+    // Check if this is a NICE guideline format
+    if (isNICEGuideline(guideline)) {
+        // NICE Format - use rules
+        const rulesList = guideline.rules.map((rule, idx) => `  ${idx + 1}. ${rule}`).join('\n');
+        const nodesList = guideline.nodes.map(node =>
+            `  - ${node.id} (${node.type}): ${node.text}`
+        ).join('\n');
+
+        return `You are a clinical decision support assistant that STRICTLY follows NICE guidelines.
+
+TODAY'S DATE: ${today}
+
+GUIDELINE: ${guideline.name} (${guideline.version})
+SOURCE: ${guideline.citation}
+URL: ${guideline.citation_url}
+
+CLINICAL DECISION RULES (YOU MUST FOLLOW THESE EXACTLY):
+${rulesList}
+
+DECISION NODES (Internal Reference):
+${nodesList}
+
+${decision ? `CURRENT STATE: Decision reached - ${decision.action.text}` : 'CURRENT STATE: Ready to assess patient'}
+
+STRICT INSTRUCTIONS:
+1. If user's first message is "START_CONVERSATION", greet them and ask for the FIRST piece of information needed to apply the rules.
+
+2. Ask ONE question at a time to gather information needed for the IF-THEN rules above.
+
+3. Apply the rules EXACTLY as written - do not deviate or interpret.
+
+4. When you have enough information to apply a rule, state the recommendation clearly with the rule that applies.
+
+
+6. Be professional, brief, and stick strictly to the guidelines.
+   - **DO NOT** start with "Thank you for sharing..." or similar fillers.
+   - **DO NOT** end with "If you need any further assistance..." or similar offers.
+   - Get straight to the point.
+
+7. **MANDATORY PATH TAG**: At the very end of EVERY response where you apply a rule, you MUST include: \`[[PATH: node_id1, node_id2, ...]]\`
+   - Include ALL nodes you traversed in order
+   - Example: If you went n1 → n2 → n6, output \`[[PATH: n1, n2, n6]]\`
+   - This is REQUIRED whenever you make a clinical recommendation
+
+8. **MANDATORY OUTPUT FORMAT**: When providing a final recommendation/decision, you MUST use this exact structure:
+
+### Diagnosis:
+[State the diagnosis or clinical finding]
+
+### Treatment:
+[Specific treatment recommendation]
+
+### Reason:
+[Clinical reasoning based on the rules. End with: "This recommendation is from ${guideline.citation}."]
+
+\`[[PATH: node_id1, node_id2, ...]]\`
+
+**ALL FOUR COMPONENTS ARE REQUIRED**: Diagnosis, Treatment, Reason (with citation), and the PATH tag.
+**DO NOT** add any text after the PATH tag.`;
     }
-    if (node.notes && node.notes.length > 0) {
-      nodeDesc += `    Notes:\n`;
-      node.notes.forEach(note => {
-        nodeDesc += `      - If ${note.if}: ${note.text}\n`;
-      });
-    }
-    return nodeDesc;
-  }).join('\n');
-  
-  return `You are a friendly and professional clinical decision support assistant. Your role is to help healthcare providers make informed decisions based on clinical guidelines.
+
+    // Legacy Format - use inputs and decision tree
+    const inputsList = guideline.inputs.map(input =>
+        `  - ${input.id}: "${input.label}" (${input.type}${input.unit ? ', unit: ' + input.unit : ''})`
+    ).join('\n');
+
+    const nodesList = guideline.nodes.map(node => {
+        let nodeDesc = `  Node "${node.id}":\n`;
+        if (node.if) {
+            nodeDesc += `    Condition: ${node.if}\n`;
+            if (node.then_action) {
+                nodeDesc += `    If TRUE → Action: [${node.then_action.level}] ${node.then_action.text}\n`;
+            }
+            if (node.then && node.then !== '') {
+                nodeDesc += `    If TRUE → Next: ${node.then}\n`;
+            }
+            if (node.else_action) {
+                nodeDesc += `    If FALSE → Action: [${node.else_action.level}] ${node.else_action.text}\n`;
+            }
+            if (node.else && node.else !== '') {
+                nodeDesc += `    If FALSE → Next: ${node.else}\n`;
+            }
+        }
+        if (node.notes && node.notes.length > 0) {
+            nodeDesc += `    Notes:\n`;
+            node.notes.forEach(note => {
+                nodeDesc += `      - If ${note.if}: ${note.text}\n`;
+            });
+        }
+        return nodeDesc;
+    }).join('\n');
+
+    return `You are a friendly and professional clinical decision support assistant. Your role is to help healthcare providers make informed decisions based on clinical guidelines.
 
 TODAY'S DATE: ${today}
 
@@ -224,46 +290,121 @@ CONVERSATIONAL INSTRUCTIONS:
 Remember: Be helpful, professional, and conversational. Guide the user naturally without exposing the technical decision tree mechanics. Always base your questions on the actual Required Inputs defined for THIS specific guideline.`;
 }
 
-function buildExplainPrompt(guideline: Guideline, decision: DecisionResult | null): string {
-  const today = new Date().toLocaleDateString('en-US', { 
-    weekday: 'long', 
-    year: 'numeric', 
-    month: 'long', 
-    day: 'numeric' 
-  });
-  
-  // Format the flowchart structure for the AI (hidden from user)
-  const inputsList = guideline.inputs.map(input => 
-    `  - ${input.id}: "${input.label}" (${input.type}${input.unit ? ', unit: ' + input.unit : ''})`
-  ).join('\n');
-  
-  const nodesList = guideline.nodes.map(node => {
-    let nodeDesc = `  Node "${node.id}":\n`;
-    if (node.if) {
-      nodeDesc += `    Condition: ${node.if}\n`;
-      if (node.then_action) {
-        nodeDesc += `    If TRUE → Action: [${node.then_action.level}] ${node.then_action.text}\n`;
-      }
-      if (node.then && node.then !== '') {
-        nodeDesc += `    If TRUE → Next: ${node.then}\n`;
-      }
-      if (node.else_action) {
-        nodeDesc += `    If FALSE → Action: [${node.else_action.level}] ${node.else_action.text}\n`;
-      }
-      if (node.else && node.else !== '') {
-        nodeDesc += `    If FALSE → Next: ${node.else}\n`;
-      }
+function buildExplainPrompt(guideline: AnyGuideline, decision: DecisionResult | null): string {
+    const today = new Date().toLocaleDateString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+    });
+
+    // Check if this is a NICE guideline format
+    if (isNICEGuideline(guideline)) {
+        // NICE Format - use rules and graph structure
+        const rulesList = guideline.rules.map((rule, idx) => `  ${idx + 1}. ${rule}`).join('\n');
+
+        const nodesList = guideline.nodes.map(node =>
+            `  - ${node.id} (${node.type}): ${node.text}`
+        ).join('\n');
+
+        const edgesList = guideline.edges.map(edge =>
+            `  - ${edge.from} → ${edge.to}${edge.label ? ` [${edge.label}]` : ''}`
+        ).join('\n');
+
+        return `You are a friendly and professional clinical decision support assistant based on NICE guidelines.
+
+TODAY'S DATE: ${today}
+
+GUIDELINE INFORMATION:
+- Name: ${guideline.name} (${guideline.version})
+- Source: ${guideline.citation}
+- URL: ${guideline.citation_url}
+
+CLINICAL DECISION RULES (Follow these strictly):
+${rulesList}
+
+DECISION GRAPH STRUCTURE (for your reference):
+Nodes:
+${nodesList}
+
+Edges (pathways):
+${edgesList}
+
+${decision ? `CURRENT STATE: Decision reached with recommendation: ${decision.action.text}` : 'CURRENT STATE: Ready to help with clinical decision-making'}
+
+INSTRUCTIONS:
+1. If user's first message is "START_CONVERSATION", greet them warmly and explain you'll help them navigate ${guideline.name} guidelines.
+
+2. Ask questions naturally to gather information needed to apply the IF-THEN rules above.
+
+3. Follow the clinical logic in the rules strictly - do not deviate from NICE recommendations.
+
+4. When providing recommendations:
+   - Present the recommendation clearly
+   - Explain the clinical reasoning based on the rules
+   - If urgent, use "⚠️ URGENT: " prefix
+
+5. Be conversational but always stay true to the NICE guideline rules defined above.
+   - **DO NOT** start with "Thank you for sharing..." or similar fillers.
+   - **DO NOT** end with "If you need any further assistance..." or similar offers.
+   - Get straight to the point.
+
+6. **MANDATORY PATH TAG**: At the very end of EVERY response where you apply a rule, you MUST include: \`[[PATH: node_id1, node_id2, ...]]\`
+   - Include ALL nodes you traversed in order
+   - Example: If you went n1 → n2 → n6, output \`[[PATH: n1, n2, n6]]\`
+   - This is REQUIRED whenever you make a clinical recommendation
+
+7. **MANDATORY OUTPUT FORMAT**: When providing a final recommendation/decision, you MUST use this exact structure:
+
+### Diagnosis:
+[State the diagnosis or clinical finding]
+
+### Treatment:
+[Specific treatment recommendation]
+
+### Reason:
+[Clinical reasoning based on the rules. End with: "This recommendation is from ${guideline.citation}."]
+
+\`[[PATH: node_id1, node_id2, ...]]\`
+
+**ALL FOUR COMPONENTS ARE REQUIRED**: Diagnosis, Treatment, Reason (with citation), and the PATH tag.
+**DO NOT** add any text after the PATH tag.
+
+Remember: You MUST follow the IF-THEN rules exactly as written. These are NICE guidelines and must be applied precisely.`;
     }
-    if (node.notes && node.notes.length > 0) {
-      nodeDesc += `    Notes:\n`;
-      node.notes.forEach(note => {
-        nodeDesc += `      - If ${note.if}: ${note.text}\n`;
-      });
-    }
-    return nodeDesc;
-  }).join('\n');
-  
-  return `You are a friendly and professional clinical decision support assistant who provides educational context while helping with clinical decisions.
+
+    // Legacy Format - use inputs and decision tree
+    const inputsList = guideline.inputs.map(input =>
+        `  - ${input.id}: "${input.label}" (${input.type}${input.unit ? ', unit: ' + input.unit : ''})`
+    ).join('\n');
+
+    const nodesList = guideline.nodes.map(node => {
+        let nodeDesc = `  Node "${node.id}":\n`;
+        if (node.if) {
+            nodeDesc += `    Condition: ${node.if}\n`;
+            if (node.then_action) {
+                nodeDesc += `    If TRUE → Action: [${node.then_action.level}] ${node.then_action.text}\n`;
+            }
+            if (node.then && node.then !== '') {
+                nodeDesc += `    If TRUE → Next: ${node.then}\n`;
+            }
+            if (node.else_action) {
+                nodeDesc += `    If FALSE → Action: [${node.else_action.level}] ${node.else_action.text}\n`;
+            }
+            if (node.else && node.else !== '') {
+                nodeDesc += `    If FALSE → Next: ${node.else}\n`;
+            }
+        }
+        if (node.notes && node.notes.length > 0) {
+            nodeDesc += `    Notes:\n`;
+            node.notes.forEach(note => {
+                nodeDesc += `      - If ${note.if}: ${note.text}\n`;
+            });
+        }
+        return nodeDesc;
+    }).join('\n');
+
+    return `You are a friendly and professional clinical decision support assistant who provides educational context while helping with clinical decisions.
 
 TODAY'S DATE: ${today}
 
