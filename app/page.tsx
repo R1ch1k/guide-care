@@ -271,6 +271,17 @@ export default function Home() {
                                 {showPatientPanel ? "Hide Patient Panel" : "Show Patient Panel"}
                             </span>
                         </button>
+                        <button
+                            onClick={async () => {
+                                await fetch("/api/auth/logout", { method: "POST" });
+                                window.location.href = "/login";
+                            }}
+                            className="w-full sm:w-auto px-5 py-2.5 text-sm font-semibold rounded-lg bg-red-50 text-red-700 hover:bg-red-100 border-2 border-red-200 transition-all shadow-sm hover:shadow flex items-center justify-center gap-2"
+                            title="Logout"
+                        >
+                            <span>🚪</span>
+                            <span>Logout</span>
+                        </button>
                     </div>
                 </div>
             </header>
