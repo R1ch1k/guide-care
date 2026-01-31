@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+SQLAlchemy>=1.4
+asyncpg
+httpx
+python-dotenv
+pydantic
+alembic
+typing_extensions
+psycopg2-binary
