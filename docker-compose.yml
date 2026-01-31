@@ -1,0 +1,32 @@
+version: "3.8"
+services:
+  postgres:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: guidecare
+      POSTGRES_PASSWORD: guidecare
+      POSTGRES_DB: guidecare
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://guidecare:guidecare@postgres:5432/guidecare
+      - LANGGRAPH_API_URL=
+      - LANGGRAPH_API_KEY=
+      - LANGGRAPH_WORKFLOW_ID=
+    depends_on:
+      - postgres
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/src:/app/src
+
+volumes:
+  pgdata:
