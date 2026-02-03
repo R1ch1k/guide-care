@@ -32,6 +32,28 @@ Notes
 - The WebSocket endpoint expects JSON messages: {"role":"user","content":"...","meta":{...}}
 - To integrate with LangGraph, set LANGGRAPH_API_URL, LANGGRAPH_API_KEY and LANGGRAPH_WORKFLOW_ID.
 
+Testing
+- Install dev dependencies:
+  ```bash
+  pip install -r backend/requirements-dev.txt
+  ```
+
+- Option A — use an existing Postgres (set `TEST_DATABASE_URL`):
+  ```bash
+  export TEST_DATABASE_URL="postgresql+asyncpg://test:test@localhost:5432/guidecare_test"
+  # On PowerShell (Windows):
+  # $env:TEST_DATABASE_URL = "postgresql+asyncpg://test:test@localhost:5432/guidecare_test"
+  TEST_DATABASE_URL="$TEST_DATABASE_URL" python backend/scripts/init_db.py
+  pytest -q backend/tests
+  ```
+
+- Option B — use Testcontainers (no local DB required):
+  ```bash
+  pip install testcontainers
+  pytest -q backend/tests
+  ```
+  Tests will automatically start a temporary Postgres container (requires Docker engine accessible to your user).
+
 Next steps & improvements
 - Add migrations (alembic) for production
 - Use proper auth & CORS policies
