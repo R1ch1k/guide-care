@@ -1,11 +1,27 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional, Any
-from uuid import UUID
 from datetime import date, datetime
+from typing import Any, List, Optional
+from uuid import UUID
+
+from pydantic import BaseModel, Field
+
+try:
+    # Pydantic v2
+    from pydantic import ConfigDict  # type: ignore
+
+    class ORMBase(BaseModel):
+        model_config = ConfigDict(from_attributes=True)
+
+except Exception:
+    # Pydantic v1 fallback
+    class ORMBase(BaseModel):
+        class Config:
+            orm_mode = True
+
 
 class Medication(BaseModel):
     name: str
     dose: Optional[str] = None
+
 
 class PatientCreate(BaseModel):
     nhs_number: str
@@ -13,13 +29,14 @@ class PatientCreate(BaseModel):
     last_name: str
     date_of_birth: date
     gender: Optional[str] = None
-    conditions: Optional[List[str]] = []
-    medications: Optional[List[Medication]] = []
-    allergies: Optional[List[str]] = []
-    recent_vitals: Optional[dict] = {}
-    clinical_notes: Optional[List[dict]] = []
+    conditions: List[str] = Field(default_factory=list)
+    medications: List[Medication] = Field(default_factory=list)
+    allergies: List[str] = Field(default_factory=list)
+    recent_vitals: dict = Field(default_factory=dict)
+    clinical_notes: List[dict] = Field(default_factory=list)
 
-class PatientOut(BaseModel):
+
+class PatientOut(ORMBase):
     id: UUID
     nhs_number: str
     first_name: str
@@ -27,37 +44,34 @@ class PatientOut(BaseModel):
     date_of_birth: date
     age: int
     gender: Optional[str] = None
-    conditions: List[str] = []
-    medications: List[Any] = []
-    allergies: List[str] = []
-    recent_vitals: dict = {}
-    clinical_notes: List[Any] = []
+    conditions: List[str] = Field(default_factory=list)
+    medications: List[Any] = Field(default_factory=list)
+    allergies: List[str] = Field(default_factory=list)
+    recent_vitals: dict = Field(default_factory=dict)
+    clinical_notes: List[Any] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        orm_mode = True
 
 class ConversationCreate(BaseModel):
     patient_id: UUID
     selected_guideline: Optional[str] = None
 
+
 class Message(BaseModel):
     role: str
     content: str
-    meta: Optional[dict] = None
+    meta: dict = Field(default_factory=dict)
     timestamp: Optional[datetime] = None
 
-class ConversationOut(BaseModel):
+
+class ConversationOut(ORMBase):
     id: UUID
     patient_id: UUID
-    messages: List[Any]
+    messages: List[Any] = Field(default_factory=list)
     selected_guideline: Optional[str] = None
-    extracted_variables: dict = {}
+    extracted_variables: dict = Field(default_factory=dict)
     final_recommendation: Optional[str] = None
     status: str
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        orm_mode = True
