@@ -2,7 +2,6 @@ import asyncio
 import logging
 from typing import Dict, Set
 from fastapi import WebSocket
-from app.app import crud  # not circular if imported lazily; we'll import functions directly
 from app.db.session import AsyncSessionLocal
 from app.db.models import Conversation
 from app.langgraph import call_langgraph
