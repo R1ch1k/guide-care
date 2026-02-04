@@ -14,6 +14,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("guidecare-backend")
 
 app = FastAPI(title="GuideCare Backend")
+app.state.graph = build_graph()
+app.state.orch_deps = build_orchestration_deps()
 
 # If CORS_ORIGINS is set, use it and allow credentials.
 # Otherwise, allow "*" but disable credentials (browser-safe).
