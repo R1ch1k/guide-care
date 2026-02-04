@@ -8,3 +8,5 @@ pydantic
 alembic
 typing_extensions
 psycopg2-binary
+pydantic-settings>=2.2,<3.0
+
