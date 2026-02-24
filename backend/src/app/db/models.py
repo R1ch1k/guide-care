@@ -36,3 +36,16 @@ class Conversation(Base):
     status = Column(String(32), default="in_progress", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+class Diagnosis(Base):
+    __tablename__ = "diagnoses"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    patient_id = Column(UUID(as_uuid=True), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True)
+    selected_guideline = Column(String(64), nullable=True)
+    extracted_variables = Column(JSONB, default=dict)
+    pathway_walked = Column(JSONB, default=list)
+    final_recommendation = Column(Text, nullable=True)
+    urgency = Column(String(32), nullable=True)
+    status = Column(String(32), default="completed", nullable=False)
+    diagnosed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

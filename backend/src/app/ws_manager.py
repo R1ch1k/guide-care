@@ -8,7 +8,7 @@ from fastapi import WebSocket
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from app.db.models import Conversation
+from app.db.models import Conversation, Diagnosis
 from app.db.session import AsyncSessionLocal
 from app.orchestration.runner import process_user_turn
 
@@ -171,6 +171,25 @@ class ConnectionManager:
 
                         conv2.updated_at = datetime.now(timezone.utc)
                         await db.commit()
+
+                        # Auto-create Diagnosis record when conversation completes
+                        if event.get("status") == "completed" and event.get("final_recommendation"):
+                            try:
+                                diag = Diagnosis(
+                                    patient_id=pid,
+                                    conversation_id=UUID(str(conv.id)),
+                                    selected_guideline=event.get("selected_guideline"),
+                                    extracted_variables=event.get("extracted_variables") or {},
+                                    pathway_walked=event.get("pathway_walked") or [],
+                                    final_recommendation=event["final_recommendation"],
+                                    urgency=event.get("meta", {}).get("urgency"),
+                                )
+                                db.add(diag)
+                                await db.commit()
+                                logger.info("Diagnosis record created for patient %s", patient_id)
+                            except Exception:
+                                await db.rollback()
+                                logger.exception("Failed to create diagnosis record")
                 except Exception:
                     await db.rollback()
                     logger.exception("Failed to persist assistant event")
