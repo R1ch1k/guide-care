@@ -1,0 +1,147 @@
+{
+  "n1": {
+    "type": "and",
+    "conditions": [
+      {
+        "type": "age_compare",
+        "variable": "age",
+        "threshold": 16,
+        "op": ">="
+      },
+      {
+        "variable": "head_injury_present"
+      }
+    ]
+  },
+  "n2": {
+    "type": "or",
+    "conditions": [
+      {
+        "type": "numeric_compare",
+        "variable": "gcs_score",
+        "threshold": 12,
+        "op": "<="
+      },
+      {
+        "variable": "suspected_open_fracture"
+      },
+      {
+        "variable": "basal_skull_fracture"
+      },
+      {
+        "variable": "seizure_present"
+      }
+    ]
+  },
+  "n4": {
+    "type": "or",
+    "conditions": [
+      {
+        "variable": "loss_of_consciousness"
+      },
+      {
+        "variable": "amnesia_since_injury"
+      }
+    ]
+  },
+  "n5": {
+    "type": "or",
+    "conditions": [
+      {
+        "type": "age_compare",
+        "variable": "age",
+        "threshold": 65,
+        "op": ">="
+      },
+      {
+        "variable": "clotting_disorder_present"
+      }
+    ]
+  },
+  "n8": {
+    "variable": "suspicion_cervical_spine_injury"
+  },
+  "n10": {
+    "type": "and",
+    "conditions": [
+      {
+        "type": "age_compare",
+        "variable": "age",
+        "threshold": 16,
+        "op": "<"
+      },
+      {
+        "variable": "head_injury_present"
+      }
+    ]
+  },
+  "n11": {
+    "type": "or",
+    "conditions": [
+      {
+        "variable": "suspicion_non_accidental_injury"
+      },
+      {
+        "and": [
+          {
+            "variable": "seizure_present"
+          },
+          {
+            "variable": "no_epilepsy_history"
+          }
+        ]
+      },
+      {
+        "type": "numeric_compare",
+        "variable": "gcs_score",
+        "threshold": 15,
+        "op": "<"
+      }
+    ]
+  },
+  "n13": {
+    "type": "or",
+    "conditions": [
+      {
+        "variable": "consciousness_assessment_needed"
+      },
+      {
+        "variable": "drowsiness_present"
+      },
+      {
+        "variable": "persistent_vomiting"
+      }
+    ]
+  },
+  "n14": {
+    "type": "and",
+    "conditions": [
+      {
+        "type": "age_compare",
+        "variable": "age",
+        "threshold": 16,
+        "op": "<"
+      },
+      {
+        "variable": "suspected_cervical_spine_injury"
+      }
+    ]
+  },
+  "n15": {
+    "type": "or",
+    "conditions": [
+      {
+        "type": "numeric_compare",
+        "variable": "gcs_score",
+        "threshold": 12,
+        "op": "<="
+      },
+      {
+        "variable": "intubation_needed"
+      },
+      {
+        "variable": "urgent_diagnosis_needed"
+      }
+    ]
+  }
+}

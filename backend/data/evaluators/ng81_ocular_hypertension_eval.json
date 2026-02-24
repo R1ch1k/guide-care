@@ -1,0 +1,64 @@
+{
+  "n1": {
+    "type": "and",
+    "conditions": [
+      {
+        "type": "numeric_compare",
+        "variable": "intraocular_pressure",
+        "threshold": 24,
+        "op": ">="
+      },
+      {
+        "variable": "risk_of_visual_impairment"
+      }
+    ]
+  },
+  "n3": {
+    "variable": "iop_not_reduced_sufficiently_with_treatments"
+  },
+  "n5": {
+    "variable": "cannot_tolerate_current_treatment"
+  },
+  "n7": {
+    "type": "and",
+    "conditions": [
+      {
+        "variable": "non_adherence_or_incorrect_technique"
+      },
+      {
+        "variable": "iop_not_reduced_sufficiently"
+      }
+    ]
+  },
+  "n9": {
+    "type": "or",
+    "conditions": [
+      {
+        "variable": "slt_not_suitable"
+      },
+      {
+        "variable": "chooses_not_to_have_slt"
+      },
+      {
+        "variable": "needs_interim_treatment"
+      }
+    ]
+  },
+  "n11": {
+    "type": "or",
+    "conditions": [
+      {
+        "variable": "allergy_to_preservatives"
+      },
+      {
+        "variable": "significant_ocular_surface_disease"
+      }
+    ]
+  },
+  "n13": {
+    "variable": "iop_not_reduced_sufficiently_with_current_treatment"
+  },
+  "n15": {
+    "variable": "additional_treatment_needed_to_reduce_iop"
+  }
+}

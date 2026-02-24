@@ -1,0 +1,11 @@
+{
+  "n1": {
+    "variable": "treatment_completed"
+  },
+  "n2": {
+    "variable": "remission_achieved"
+  },
+  "n4": {
+    "variable": "higher_risk_of_relapse"
+  }
+}
