@@ -1,27 +1,26 @@
 import logging
-import os
 from uuid import UUID
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.core.config import settings
 from app.api import conversations, patients
 from app.db.session import init_db
 from app.seed import seed_if_empty
 from app.ws_manager import manager
 
+from app.orchestration.deps import build_orchestration_deps
+from app.orchestration.graph import build_graph
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("guidecare-backend")
 
 app = FastAPI(title="GuideCare Backend")
-app.state.graph = build_graph()
-app.state.orch_deps = build_orchestration_deps()
 
-# If CORS_ORIGINS is set, use it and allow credentials.
-# Otherwise, allow "*" but disable credentials (browser-safe).
-cors_origins_env = os.getenv("CORS_ORIGINS", "").strip()
-if cors_origins_env:
-    allow_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
+# CORS (browser-safe)
+if settings.CORS_ORIGINS:
+    allow_origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
     allow_credentials = True
 else:
     allow_origins = ["*"]
@@ -44,16 +43,26 @@ async def on_startup():
     await init_db()
     await seed_if_empty()
 
+    # Build orchestration ONCE
+    deps = build_orchestration_deps()
+    graph = build_graph(deps)
+
+    app.state.orch_deps = deps
+    app.state.orch_graph = graph
+
+    # Wire into websocket manager
+    manager.set_orchestrator(graph)
+
 
 @app.websocket("/ws/chat/{patient_id}")
 async def websocket_chat(websocket: WebSocket, patient_id: UUID):
-    await manager.connect(patient_id, websocket)
+    await manager.connect(str(patient_id), websocket)
     try:
         while True:
             data = await websocket.receive_json()
-            await manager.handle_incoming_message(patient_id, data)
+            await manager.handle_incoming_message(str(patient_id), data)
     except WebSocketDisconnect:
-        await manager.disconnect(patient_id, websocket)
+        await manager.disconnect(str(patient_id), websocket)
     except Exception as e:
         logger.exception("WebSocket error: %s", e)
-        await manager.disconnect(patient_id, websocket)
+        await manager.disconnect(str(patient_id), websocket)
