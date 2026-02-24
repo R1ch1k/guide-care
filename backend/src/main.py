@@ -5,7 +5,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.api import conversations, patients
+from app.api import conversations, diagnoses, patients
 from app.db.session import init_db
 from app.seed import seed_if_empty
 from app.ws_manager import manager
@@ -36,6 +36,7 @@ app.add_middleware(
 
 app.include_router(patients.router, prefix="/patients", tags=["patients"])
 app.include_router(conversations.router, prefix="/conversations", tags=["conversations"])
+app.include_router(diagnoses.router, prefix="/diagnoses", tags=["diagnoses"])
 
 
 @app.on_event("startup")

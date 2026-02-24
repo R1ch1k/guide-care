@@ -75,3 +75,18 @@ class ConversationOut(ORMBase):
     status: str
     created_at: datetime
     updated_at: datetime
+
+
+class DiagnosisOut(ORMBase):
+    id: UUID
+    patient_id: UUID
+    conversation_id: Optional[UUID] = None
+    selected_guideline: Optional[str] = None
+    extracted_variables: dict = Field(default_factory=dict)
+    pathway_walked: List[Any] = Field(default_factory=list)
+    final_recommendation: Optional[str] = None
+    urgency: Optional[str] = None
+    status: str
+    diagnosed_at: datetime
+    # Joined fields (optional, populated by list endpoint)
+    patient_name: Optional[str] = None
