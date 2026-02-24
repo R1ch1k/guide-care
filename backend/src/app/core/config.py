@@ -37,8 +37,8 @@ class Settings(BaseSettings):
 
     # Runtime knobs
     MODEL_HISTORY_MAX_MESSAGES: int = 20
-    AI_TIMEOUT_SECONDS: float = 3.0
-    AI_RETRIES: int = 1
+    AI_TIMEOUT_SECONDS: float = 30.0
+    AI_RETRIES: int = 2
 
     # Comma-separated list
     CORS_ORIGINS: Optional[str] = None

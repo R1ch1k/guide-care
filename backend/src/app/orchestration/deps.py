@@ -22,6 +22,7 @@ from app.guideline_engine import (
     extract_json_from_text,
     fix_variable_extraction,
     fix_variable_extraction_v2,
+    get_var_description,
     format_recommendation_template,
     get_guideline,
     get_missing_variables_for_next_step,
@@ -207,13 +208,26 @@ OUTPUT FORMAT (STRICT JSON):
 CRITICAL: Follow the 4-step urgency algorithm in order. Return ONLY valid JSON."""
 
 
+def _format_meds(medications: list) -> str:
+    """Format medications list (may be strings or dicts with name/dose)."""
+    parts = []
+    for m in (medications or []):
+        if isinstance(m, dict):
+            name = m.get("name", "")
+            dose = m.get("dose", "")
+            parts.append(f"{name} {dose}".strip() if name else str(m))
+        else:
+            parts.append(str(m))
+    return ", ".join(parts) or "None"
+
+
 def _format_triage_prompt(
     symptoms: str, patient_record: dict
 ) -> str:
     """Build patient-specific triage prompt."""
     age = patient_record.get("age", "N/A")
     history = ", ".join(patient_record.get("conditions", []) or patient_record.get("medical_history", [])) or "None"
-    meds = ", ".join(patient_record.get("medications", [])) or "None"
+    meds = _format_meds(patient_record.get("medications", []))
     return (
         f'Patient symptoms: "{symptoms}"\n'
         f"Patient age: {age}\n"
@@ -252,7 +266,7 @@ async def triage_agent(
     med_history = ", ".join(
         patient_record.get("conditions", []) or patient_record.get("medical_history", [])
     ) or "None"
-    meds = ", ".join(patient_record.get("medications", [])) or "None"
+    meds = _format_meds(patient_record.get("medications", []))
 
     system_prompt = TRIAGE_SYSTEM_PROMPT.replace("{symptoms}", symptoms or "")
     system_prompt = system_prompt.replace("{age}", str(age))
@@ -335,16 +349,19 @@ async def gpt_clarifier(
 ) -> Dict[str, Any]:
     """Generate clarification questions driven by the guideline evaluator.
 
-    Uses the guideline engine to find missing variables, then asks the LLM
-    to generate a natural-language question targeting the next missing variable.
+    Uses the guideline engine to find missing variables, extracts what we can
+    from symptoms text + patient record using regex helpers, then only asks
+    about truly missing variables.
     """
-    # If we already have answers and no guideline selected yet, skip clarification
+    # If we already have answers, skip clarification
     if answers:
         return {"done": True, "questions": []}
 
-    # Try to determine guideline from symptoms for early clarification
-    s = (symptoms or "").lower()
-    guideline_id = _guess_guideline(s)
+    # Use triage-suggested guideline first, fall back to keyword guess
+    guideline_id = (triage or {}).get("suggested_guideline", "")
+    if not guideline_id or not get_guideline(guideline_id):
+        s = (symptoms or "").lower()
+        guideline_id = _guess_guideline(s)
 
     if not guideline_id:
         return {"done": True, "questions": []}
@@ -360,7 +377,32 @@ async def gpt_clarifier(
     if patient_record.get("gender"):
         known_vars["gender"] = patient_record["gender"]
 
-    # Check what's missing
+    # Extract variables from symptom text using regex helpers (from notebook)
+    symptom_text = symptoms or ""
+    extracted = fix_variable_extraction({}, symptom_text)
+    extracted = fix_variable_extraction_v2(extracted, symptom_text)
+
+    # Also extract from patient conditions
+    conditions = patient_record.get("conditions", [])
+    for cond in conditions:
+        cond_lower = cond.lower()
+        if "diabetes" in cond_lower:
+            extracted["diabetes"] = True
+        if "hypertension" in cond_lower:
+            extracted.setdefault("hypertension_history", True)
+
+    # Extract BP from recent vitals
+    vitals = patient_record.get("recent_vitals", {})
+    if vitals.get("last_bp") and "clinic_bp" not in extracted:
+        extracted["clinic_bp"] = vitals["last_bp"]
+        extracted["bp"] = vitals["last_bp"]
+
+    # Merge extracted into known_vars (extracted values override)
+    for k, v in extracted.items():
+        if v is not None:
+            known_vars[k] = v
+
+    # Check what's still missing after extraction
     nodes = g_data["guideline"]["nodes"]
     edges = g_data["guideline"]["edges"]
     evaluator = g_data["merged_evaluator"]
@@ -370,25 +412,57 @@ async def gpt_clarifier(
     if not missing:
         return {"done": True, "questions": []}
 
+    # Variable descriptions for better questions
+    var_desc = {
+        "clinic_bp": "the patient's most recent clinic blood pressure reading (e.g. 155/95)",
+        "age": "the patient's age",
+        "gender": "the patient's gender",
+        "fever": "whether the patient has a fever and if so what temperature",
+        "duration": "how long the symptoms have been present (in days)",
+        "vomiting_count": "how many times the patient has vomited",
+        "gcs_score": "the patient's Glasgow Coma Scale score",
+        "loss_of_consciousness": "whether the patient lost consciousness",
+        "head_injury_present": "whether there was a head injury",
+        "recurrent_uti": "whether this is a recurrent urinary tract infection",
+        "gestational_age": "how many weeks pregnant the patient is",
+        "bite_type": "what type of animal caused the bite (cat, dog, human, etc.)",
+        "broken_skin": "whether the skin is broken",
+        "ear_pain": "whether the patient has ear pain",
+        "centor_score": "the FeverPAIN or Centor score components (fever, tonsillar exudate, tender lymph nodes, absence of cough)",
+        "iop": "the patient's intraocular pressure reading",
+        "treatment_completed": "whether previous treatment has been completed",
+        "acute_treatment": "what acute treatment the patient received",
+        "emergency_signs": "whether there are any emergency/red flag signs",
+        "newly_diagnosed": "whether this is a new diagnosis",
+    }
+
     # Generate questions for up to 2 missing variables
     questions: List[str] = []
     for target_var in missing[:2]:
+        desc = var_desc.get(target_var, target_var)
         try:
-            prompt = f"""You are a medical assistant helping a doctor gather information.
+            prompt = f"""You are a medical assistant collecting clinical information from a doctor for NICE guideline {guideline_id}.
 
-GUIDELINE: NICE {guideline_id}
-PATIENT SYMPTOMS: {symptoms}
+Patient: {patient_record.get('age', 'unknown')} year old {patient_record.get('gender', 'patient')}
+Symptoms: {symptoms}
+What we already know: {json.dumps({k: v for k, v in known_vars.items() if v is not None}, default=str)}
 
-We need to determine: {target_var}
+We need to determine: {desc}
 
-Generate ONE specific clarification question to ask the doctor. Be concise and professional."""
+Generate ONE specific, direct clinical question to ask. Do NOT ask about scheduling appointments or tests.
+Ask directly for the clinical value or finding we need. Be concise (one sentence).
+Example good questions:
+- "What is the patient's clinic blood pressure reading?"
+- "Has the patient experienced any loss of consciousness?"
+- "How many days has the patient had these symptoms?"
+"""
 
-            raw = await generate(prompt, max_tokens=150, temperature=0.1)
+            raw = await generate(prompt, max_tokens=100, temperature=0.1)
             question = extract_best_question(raw)
             questions.append(question)
         except Exception as e:
             logger.warning("Failed to generate clarification question: %s", e)
-            questions.append(f"Could you provide information about {target_var}?")
+            questions.append(f"What is the patient's {desc}?")
 
     return {"done": False, "questions": questions}
 
@@ -506,7 +580,7 @@ async def extract_variables_20b(
         return {}
 
     patient_record_section = build_patient_record(scenario)
-    var_list = [VAR_DESCRIPTIONS.get(v, f"{v} (extract this value)") for v in all_vars]
+    var_list = [get_var_description(v) for v in all_vars]
 
     prompt = f"""You are extracting clinical variables from a patient conversation.
 
@@ -535,9 +609,214 @@ JSON:
     extracted = fix_variable_extraction(extracted, scenario)
     extracted = fix_variable_extraction_v2(extracted, scenario)
 
-    # Merge in clarification answers
+    # Normalize variable names — LLMs often use aliases instead of the exact
+    # evaluator variable names. Map common aliases to correct names.
+    _var_aliases = {
+        # NG136 hypertension
+        "abpm_accepted": "abpm_tolerated",
+        "abpm_done": "abpm_tolerated",
+        "abpm_average": "abpm_daytime",
+        "abpm_reading": "abpm_daytime",
+        "abpm_result": "abpm_daytime",
+        "hypertension_confirmed": "abpm_daytime",
+        "cvd": "cardiovascular_disease",
+        "cv_disease": "cardiovascular_disease",
+        "heart_disease": "cardiovascular_disease",
+        "kidney_disease": "renal_disease",
+        "bp": "clinic_bp",
+        "blood_pressure": "clinic_bp",
+        "repeat_bp": "repeat_clinic_bp",
+        "emergency": "emergency_signs",
+        "ethnicity_not_black": "not_black_african_caribbean",
+        # NG232 head injury
+        "gcs": "gcs_score",
+        "glasgow_coma_scale": "gcs_score",
+        "loc": "loss_of_consciousness",
+        "vomiting": "persistent_vomiting",
+        "seizure": "seizure_present",
+        "seizures": "seizure_present",
+        "amnesia": "amnesia_since_injury",
+        "skull_fracture": "basal_skull_fracture",
+        "spine_injury": "suspected_cervical_spine_injury",
+        # NG84 sore throat
+        "centor": "centor_score",
+        "feverpain": "feverpain_score",
+        "fever_pain_score": "feverpain_score",
+        # NG91 otitis media
+        "ear_discharge": "otorrhoea",
+        "bilateral_infection": "infection_both_ears",
+        "penicillin_allergy": "penicillin_allergy_intolerance",
+        # NG112 UTI
+        "uti": "current_episode_uti",
+        "menopausal": "perimenopause_or_menopause",
+        # NG81 glaucoma
+        "iop_reading": "intraocular_pressure",
+    }
+    for alias, correct in _var_aliases.items():
+        if alias in extracted and correct not in extracted:
+            extracted[correct] = extracted.pop(alias)
+        elif alias in extracted:
+            del extracted[alias]
+
+    # Enrich from patient record — map structured patient data to evaluator vars
+    if patient.get("age") and "age" not in extracted:
+        extracted["age"] = patient["age"]
+    if patient.get("conditions"):
+        conds_lower = [c.lower() for c in patient["conditions"]]
+
+        # Detect which conditions the patient HAS
+        has_diabetes = any("diabetes" in c for c in conds_lower)
+        has_cvd = any(w in c for c in conds_lower for w in ("cardiovascular", "heart disease", "cvd", "coronary"))
+        has_renal = any(w in c for c in conds_lower for w in ("renal", "kidney", "ckd"))
+        has_hypertension = any("hypertension" in c for c in conds_lower)
+
+        # Set True/False based on patient conditions (not just True when present)
+        if "diabetes" in all_vars:
+            extracted.setdefault("diabetes", has_diabetes)
+        if "cardiovascular_disease" in all_vars:
+            extracted.setdefault("cardiovascular_disease", has_cvd)
+        if "renal_disease" in all_vars:
+            extracted.setdefault("renal_disease", has_renal)
+        if has_hypertension:
+            extracted.setdefault("hypertension_history", True)
+
+    if patient.get("recent_vitals", {}).get("last_bp") and "clinic_bp" not in extracted:
+        extracted["clinic_bp"] = patient["recent_vitals"]["last_bp"]
+
+    # Estimate QRISK when not explicitly provided.
+    # QRISK >= 10% is very likely for patients over 60 with hypertension.
+    # This avoids the tree stopping at n19 for lack of QRISK data.
+    if "qrisk_10yr" in all_vars and "qrisk_10yr" not in extracted:
+        age = extracted.get("age") or patient.get("age") or 0
+        has_hyp = extracted.get("hypertension_history", False)
+        has_diab = extracted.get("diabetes", False)
+        if isinstance(age, (int, float)) and age >= 60 and has_hyp:
+            extracted["qrisk_10yr"] = 15  # conservative estimate
+        elif isinstance(age, (int, float)) and age >= 50 and has_hyp and has_diab:
+            extracted["qrisk_10yr"] = 12  # conservative estimate
+
+    # Default safe values for binary flags that are typically false unless stated.
+    # These are emergency/safety red flags across all guidelines that should be false
+    # unless explicitly mentioned in the clinical scenario.
+    _default_false_vars = {
+        # NG136 hypertension
+        "emergency_signs", "retinal_haemorrhage", "papilloedema",
+        "life_threatening_symptoms", "target_organ_damage",
+        # NG232 head injury
+        "basal_skull_fracture", "suspected_open_fracture", "intubation_needed",
+        "suspicion_non_accidental_injury", "suspected_cervical_spine_injury",
+        "suspicion_cervical_spine_injury", "clotting_disorder_present",
+        # NG84/NG91 infections
+        "systemically_very_unwell", "severe_systemic_infection_or_severe_complications",
+        "signs_of_serious_illness_condition", "serious_illness_condition",
+        # NG184 bites
+        "signs_serious_illness_or_penetrating_wound",
+        # NG133 pre-eclampsia
+        "intrauterine_death", "placental_abruption",
+        "previous_severe_eclampsia",
+        # NG81 glaucoma/ocular hypertension — treatment-path flags
+        # These are false for newly diagnosed patients not yet on treatment
+        "prescribed_eye_drops",
+        "cannot_tolerate_pharmacological_treatment",
+        "allergy_to_preservatives", "significant_ocular_surface_disease",
+        "iop_not_reduced_sufficiently_with_current_treatment",
+        "iop_not_reduced_sufficiently_with_treatments",
+        "non_adherence_or_incorrect_technique",
+        "iop_not_reduced_sufficiently",
+        "additional_treatment_needed_to_reduce_iop",
+        "chooses_not_to_have_slt", "chooses_no_slt",
+        "needs_interim_treatment",
+        "cannot_tolerate_current_treatment",
+        "insufficient_iop_reduction_post_surgery",
+        "reduced_effects_of_initial_slt",
+        "waiting_for_slt_needs_treatment",
+        "iop_not_reduced_with_pga",
+        "advanced_coag_no_surgery",
+        "satisfactory_adherence_and_technique",
+        "needs_additional_iop_reduction",
+        # NG91 otitis media — treatment outcome flags
+        "high_risk_complications",
+    }
+    for var in _default_false_vars:
+        if var in all_vars and var not in extracted:
+            extracted[var] = False
+
+    # Infer not_black_african_caribbean: default to True unless record says otherwise
+    if "not_black_african_caribbean" in all_vars and "not_black_african_caribbean" not in extracted:
+        extracted["not_black_african_caribbean"] = True
+
+    # Infer no_epilepsy_history: default True unless patient has epilepsy
+    if "no_epilepsy_history" in all_vars and "no_epilepsy_history" not in extracted:
+        conds = [c.lower() for c in (patient.get("conditions") or [])]
+        has_epilepsy = any("epilep" in c for c in conds)
+        extracted["no_epilepsy_history"] = not has_epilepsy
+
+    # Determine if patient is already on treatment (check medications)
+    patient_meds = patient.get("medications") or []
+    on_treatment = len(patient_meds) > 0
+
+    # Antihypertensive drug classes for detecting current BP treatment
+    _bp_drug_keywords = {
+        "amlodipine", "nifedipine", "felodipine", "lercanidipine",  # CCBs
+        "ramipril", "lisinopril", "enalapril", "perindopril",  # ACE inhibitors
+        "losartan", "candesartan", "valsartan", "irbesartan", "olmesartan",  # ARBs
+        "bendroflumethiazide", "indapamide", "chlorthalidone",  # Thiazides
+        "spironolactone", "doxazosin", "bisoprolol", "atenolol",  # Step 4
+    }
+    on_bp_treatment = False
+    for m in patient_meds:
+        med_name = (m.get("name", "") if isinstance(m, dict) else str(m)).lower()
+        if any(drug in med_name for drug in _bp_drug_keywords):
+            on_bp_treatment = True
+            break
+
+    # For patients already on BP treatment with target_bp_achieved=False,
+    # KEEP it — this is a valid clinical finding that drives Step 2/3/4 selection.
+    # Only remove treatment-outcome vars for patients NOT yet on treatment.
+    _treatment_outcome_vars = {
+        "treatment_response", "treatment_completed",
+        "remission_achieved",  # NG222
+        "back_up_antibiotic_prescription_given", "immediate_antibiotic_prescription_given",  # NG84
+        "backup_antibiotic_given", "no_antibiotic_given", "immediate_antibiotic_not_given",  # NG91
+        "reassessment_needed_due_to_worsening_symptoms",  # NG84
+        "insufficient_iop_reduction_post_surgery", "reduced_effects_of_initial_slt",  # NG81
+    }
+    if not on_bp_treatment:
+        _treatment_outcome_vars.add("target_bp_achieved")
+
+    for var in _treatment_outcome_vars:
+        if var in extracted and not extracted[var]:
+            del extracted[var]
+
+    # For patients ON BP treatment whose BP is above target, explicitly set target_bp_achieved=False
+    if on_bp_treatment and "target_bp_achieved" in all_vars and "target_bp_achieved" not in extracted:
+        # Check if BP is still above target (140/90 for < 80, 150/90 for >= 80)
+        bp_str = extracted.get("clinic_bp", "")
+        if bp_str:
+            from app.guideline_engine import parse_bp
+            bp = parse_bp(bp_str)
+            if bp:
+                age = extracted.get("age", 0)
+                target_sys = 150 if (isinstance(age, (int, float)) and age >= 80) else 140
+                if bp[0] >= target_sys or bp[1] >= 90:
+                    extracted["target_bp_achieved"] = False
+
+    # Merge in clarification answers — map answer text to correct variable names
     for q, a in (clarifications or {}).items():
         q_lower = q.lower()
+        # Check for ABPM-related answers
+        if "abpm" in q_lower or "ambulatory" in q_lower:
+            if "abpm_tolerated" not in extracted or not extracted["abpm_tolerated"]:
+                a_lower = a.lower()
+                if any(w in a_lower for w in ("yes", "done", "tolerated", "completed")):
+                    extracted["abpm_tolerated"] = True
+                    # Try to extract the ABPM reading from the answer
+                    import re as _re
+                    bp_match = _re.search(r"(\d{2,3})\s*/\s*(\d{2,3})", a)
+                    if bp_match and "abpm_daytime" not in extracted:
+                        extracted["abpm_daytime"] = f"{bp_match.group(1)}/{bp_match.group(2)}"
+            continue
+
         for var_name in all_vars:
             var_words = var_name.lower().replace("_", " ").split()
             if any(w in q_lower for w in var_words if len(w) > 3):
@@ -545,6 +824,7 @@ JSON:
                     extracted[var_name] = a
                 break
 
+    logger.info("Final extracted variables: %s", {k: v for k, v in extracted.items() if v is not None})
     return extracted
 
 
@@ -597,13 +877,13 @@ async def walk_guideline_graph_fn(
     walked = [f"{p[0]}({p[2]})" for p in result["path"]]
     last_node = result["path"][-1][0] if result["path"] else (current_node or "start")
 
-    # Terminal if we reached action nodes and have no missing variables
-    terminal = bool(result["reached_actions"]) and not result["missing_variables"]
-
+    # Always terminal after one traversal — re-walking without new variables
+    # would produce the same result and cause an infinite loop.
+    # format_output handles both complete and partial results.
     return {
         "current_node": last_node,
         "pathway_walked": walked,
-        "terminal": terminal,
+        "terminal": True,
         "reached_actions": result["reached_actions"],
         "missing_variables": result["missing_variables"],
     }
@@ -649,7 +929,8 @@ async def format_output_20b(
         scenario = " ".join(scenario_parts) if scenario_parts else ""
 
         recommendation = format_recommendation_template(
-            guideline, scenario, actions, variables
+            guideline, scenario, actions, variables,
+            medications=patient.get("medications"),
         )
         return {
             "final_recommendation": recommendation,

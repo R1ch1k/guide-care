@@ -5,6 +5,9 @@
   "n3": {
     "variable": "chooses_no_slt"
   },
+  "n4": {
+    "variable": "slt_not_suitable"
+  },
   "n5": {
     "variable": "waiting_for_slt_needs_treatment"
   },

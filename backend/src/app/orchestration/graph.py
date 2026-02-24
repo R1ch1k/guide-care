@@ -219,9 +219,6 @@ def build_graph(deps):
             return "clarify"
         return "select_guideline"
 
-    def after_walk(state: ConversationState) -> str:
-        return "format_output" if state.get("terminal") else "walk_graph"
-
     # ---- build graph ----
 
     sg = StateGraph(ConversationState)
@@ -244,7 +241,7 @@ def build_graph(deps):
     )
     sg.add_edge("select_guideline", "extract_variables")
     sg.add_edge("extract_variables", "walk_graph")
-    sg.add_conditional_edges("walk_graph", after_walk, {"walk_graph": "walk_graph", "format_output": "format_output"})
+    sg.add_edge("walk_graph", "format_output")
     sg.add_edge("format_output", END)
 
     return sg.compile(checkpointer=MemorySaver())

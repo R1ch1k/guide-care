@@ -21,6 +21,28 @@
       }
     ]
   },
+  "n3": {
+    "type": "or",
+    "conditions": [
+      {
+        "variable": "otorrhoea"
+      },
+      {
+        "type": "and",
+        "conditions": [
+          {
+            "type": "age_compare",
+            "variable": "age",
+            "threshold": 2,
+            "op": "<"
+          },
+          {
+            "variable": "infection_both_ears"
+          }
+        ]
+      }
+    ]
+  },
   "n4": {
     "type": "and",
     "conditions": [

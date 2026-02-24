@@ -759,11 +759,11 @@ VAR_DESCRIPTIONS = {
     "mechanism": "mechanism (how injury occurred: fall, assault, RTC, etc.)",
     "vomiting_count": "vomiting_count (number of vomiting episodes as integer)",
     "gcs_score": "gcs_score (Glasgow Coma Scale score 3-15)",
-    "emergency_signs": "emergency_signs (true if life-threatening symptoms)",
+    "emergency_signs": "emergency_signs (true if life-threatening symptoms present)",
     "loss_of_consciousness": "loss_of_consciousness (true/false)",
     "fever": "fever (true if fever present, or temperature value)",
     "duration": "duration (duration in days as integer)",
-    "clinic_bp": "clinic_bp (blood pressure reading as string e.g. '140/90')",
+    "clinic_bp": "clinic_bp (clinic blood pressure reading as string e.g. '155/95')",
     "gestational_age": "gestational_age (weeks of pregnancy as integer)",
     "gender": "gender (male/female)",
     "recurrent_uti": "recurrent_uti (true/false)",
@@ -778,7 +778,135 @@ VAR_DESCRIPTIONS = {
     "iop": "iop (intraocular pressure as integer)",
     "iop_level": "iop_level (intraocular pressure as integer)",
     "family_history_glaucoma": "family_history_glaucoma (true/false)",
+    # NG136 hypertension-specific variables
+    "abpm_tolerated": "abpm_tolerated (true if ABPM was done and tolerated, false if declined/not tolerated)",
+    "abpm_daytime": "abpm_daytime (ABPM daytime average BP as string e.g. '150/95')",
+    "hbpm_average": "hbpm_average (home BP monitoring average as string e.g. '145/90')",
+    "repeat_clinic_bp": "repeat_clinic_bp (repeat clinic BP reading as string e.g. '180/120')",
+    "not_black_african_caribbean": "not_black_african_caribbean (true if patient is NOT of black African or African-Caribbean family origin)",
+    "cardiovascular_disease": "cardiovascular_disease (true if patient has cardiovascular disease)",
+    "target_organ_damage": "target_organ_damage (true if target-organ damage present)",
+    "diabetes": "diabetes (true if patient has diabetes)",
+    "renal_disease": "renal_disease (true if patient has renal/kidney disease)",
+    "qrisk_10yr": "qrisk_10yr (10-year QRISK cardiovascular risk score as percentage, e.g. 15)",
+    "retinal_haemorrhage": "retinal_haemorrhage (true/false)",
+    "papilloedema": "papilloedema (true/false)",
+    "life_threatening_symptoms": "life_threatening_symptoms (true if life-threatening symptoms present)",
+    "target_bp_achieved": "target_bp_achieved (true if BP is at target on current treatment - only set if patient is already on treatment)",
+    # NG232 head injury variables
+    "amnesia_since_injury": "amnesia_since_injury (true if patient has amnesia since the injury)",
+    "basal_skull_fracture": "basal_skull_fracture (true if signs of basal skull fracture present)",
+    "clotting_disorder_present": "clotting_disorder_present (true if patient has a clotting disorder or is on anticoagulants)",
+    "consciousness_assessment_needed": "consciousness_assessment_needed (true/false)",
+    "drowsiness_present": "drowsiness_present (true if patient is drowsy)",
+    "intubation_needed": "intubation_needed (true/false)",
+    "no_epilepsy_history": "no_epilepsy_history (true if patient does NOT have epilepsy)",
+    "persistent_vomiting": "persistent_vomiting (true if patient has had persistent vomiting)",
+    "seizure_present": "seizure_present (true if patient has had a seizure after the injury)",
+    "suspected_cervical_spine_injury": "suspected_cervical_spine_injury (true/false)",
+    "suspected_open_fracture": "suspected_open_fracture (true/false)",
+    "suspicion_non_accidental_injury": "suspicion_non_accidental_injury (true/false)",
+    "urgent_diagnosis_needed": "urgent_diagnosis_needed (true/false)",
+    # NG84 sore throat variables
+    "centor_score": "centor_score (Centor score 0-4)",
+    "feverpain_score": "feverpain_score (FeverPAIN score 0-5)",
+    "systemically_very_unwell": "systemically_very_unwell (true if patient is systemically very unwell)",
+    "high_risk_of_complications": "high_risk_of_complications (true if patient at high risk of complications)",
+    # NG91 otitis media variables
+    "otorrhoea": "otorrhoea (true if ear discharge present)",
+    "infection_both_ears": "infection_both_ears (true if infection in both ears)",
+    "penicillin_allergy_intolerance": "penicillin_allergy_intolerance (true if patient has penicillin allergy)",
+    # NG112 UTI variables
+    "current_episode_uti": "current_episode_uti (true if patient currently has a UTI)",
+    "perimenopause_or_menopause": "perimenopause_or_menopause (true if patient is perimenopausal or menopausal)",
+    # NG184 bite variables
+    "person_with_comorbidities": "person_with_comorbidities (true if patient has comorbidities increasing infection risk)",
+    "wound_could_be_deep": "wound_could_be_deep (true if wound could involve deep tissue)",
+    # NG222 meningitis variables
+    "remission_achieved": "remission_achieved (true if remission has been achieved)",
+    "higher_risk_of_relapse": "higher_risk_of_relapse (true if patient is at higher risk of relapse)",
+    # NG81 glaucoma variables
+    "intraocular_pressure": "intraocular_pressure (IOP reading as integer mmHg)",
+    "newly_diagnosed_coag": "newly_diagnosed_coag (true if newly diagnosed chronic open-angle glaucoma)",
+    "slt_not_suitable": "slt_not_suitable (true if selective laser trabeculoplasty is not suitable)",
+    "risk_of_visual_impairment": "risk_of_visual_impairment (true if patient is at risk of visual impairment)",
+    # NG133 pre-eclampsia variables
+    "high_risk_factors_1_or_more": "high_risk_factors_1_or_more (true if 1+ high risk factors for pre-eclampsia)",
+    "moderate_risk_factors_2_or_more": "moderate_risk_factors_2_or_more (true if 2+ moderate risk factors)",
 }
+
+
+def auto_describe_variable(var_name: str) -> str:
+    """Generate a description from a snake_case variable name.
+
+    Used as fallback when a variable is not in VAR_DESCRIPTIONS.
+    """
+    readable = var_name.replace("_", " ")
+    # Detect boolean-style names
+    bool_prefixes = ("is", "has", "not", "no", "can", "needs", "should")
+    bool_keywords = ("present", "needed", "given", "achieved", "suitable",
+                     "effective", "indicated", "suspected", "diagnosed")
+    if (any(readable.startswith(p + " ") for p in bool_prefixes) or
+            any(k in readable for k in bool_keywords)):
+        return f"{var_name} (true/false)"
+    # Score-like
+    if "score" in readable:
+        return f"{var_name} (numeric score)"
+    # BP-like
+    if "bp" in readable or "pressure" in readable:
+        return f"{var_name} (blood pressure reading as string e.g. '140/90', or numeric value)"
+    return f"{var_name} (extract this clinical value)"
+
+
+def get_var_description(var_name: str) -> str:
+    """Get description for a variable, using VAR_DESCRIPTIONS or auto-generating."""
+    return VAR_DESCRIPTIONS.get(var_name, auto_describe_variable(var_name))
+
+
+def _split_treatment_steps(actions: List[str]) -> tuple:
+    """Separate immediate clinical actions from treatment-ladder steps.
+
+    Treatment steps typically start with "Step N:" and represent a sequential
+    escalation ladder — only the first step is the immediate recommendation.
+    """
+    step_pattern = re.compile(r"^step\s+\d", re.IGNORECASE)
+    immediate = []
+    steps = []
+    for a in actions:
+        if step_pattern.match(a.strip()):
+            steps.append(a.strip())
+        else:
+            immediate.append(a.strip())
+    return immediate, steps
+
+
+def _detect_current_treatment_step(medications: list) -> int:
+    """Detect which treatment step the patient is currently on based on medications.
+
+    Returns 0 if not on treatment, 1-4 for the detected step.
+    """
+    if not medications:
+        return 0
+
+    med_names = []
+    for m in medications:
+        name = (m.get("name", "") if isinstance(m, dict) else str(m)).lower()
+        med_names.append(name)
+
+    has_ccb = any(d in n for n in med_names for d in ("amlodipine", "nifedipine", "felodipine", "lercanidipine"))
+    has_ace_arb = any(d in n for n in med_names for d in ("ramipril", "lisinopril", "enalapril", "perindopril", "losartan", "candesartan", "valsartan", "irbesartan", "olmesartan"))
+    has_thiazide = any(d in n for n in med_names for d in ("bendroflumethiazide", "indapamide", "chlorthalidone"))
+    has_step4 = any(d in n for n in med_names for d in ("spironolactone", "doxazosin", "bisoprolol", "atenolol"))
+
+    if has_step4:
+        return 4
+    if has_thiazide and (has_ccb or has_ace_arb):
+        return 3
+    if (has_ccb and has_ace_arb) or has_thiazide:
+        return 2
+    if has_ccb or has_ace_arb:
+        return 1
+    return 0
 
 
 def format_recommendation_template(
@@ -786,10 +914,12 @@ def format_recommendation_template(
     scenario: str,
     actions: List[str],
     known_vars: dict,
+    medications: Optional[list] = None,
 ) -> str:
     """Template-based formatting of action nodes into recommendation text.
 
     No LLM call needed — formats directly from action node text.
+    Handles treatment ladders by recommending only the first applicable step.
     """
     # Deduplicate actions preserving order
     seen: set = set()
@@ -800,28 +930,50 @@ def format_recommendation_template(
             seen.add(a_lower)
             unique_actions.append(a.strip())
 
-    # Build recommendation text
-    verb_starts = {
-        "do", "refer", "give", "offer", "advise", "note", "consider",
-        "prescribe", "seek", "review", "continue", "step", "annual",
-        "measure", "perform", "diagnose",
+    # Separate immediate actions from treatment-ladder steps
+    immediate, steps = _split_treatment_steps(unique_actions)
+
+    # Filter out process/diagnostic actions that are already completed
+    # (e.g. "Measure clinic BP", "Perform ABPM") when we have later actions
+    _completed_indicators = {
+        "measure clinic bp", "offer abpm to confirm diagnosis", "perform abpm",
+        "offer hbpm instead", "offer hbpm", "continue monitoring",
     }
+    if len(immediate) > 2:
+        immediate = [a for a in immediate if a.strip().lower() not in _completed_indicators] or immediate
 
-    if len(unique_actions) == 1:
-        actions_text = unique_actions[0]
-    elif len(unique_actions) == 2:
-        second = unique_actions[1]
-        if (
-            second[0].isupper()
-            and second.split()[0].lower() not in verb_starts
-        ):
-            second = second[0].lower() + second[1:]
-        actions_text = f"{unique_actions[0]}. Additionally, {second}"
-    else:
-        actions_text = " ".join(
-            f"({i}) {a}" for i, a in enumerate(unique_actions, 1)
-        )
+    # Detect current treatment step from medications to skip completed steps
+    current_step = _detect_current_treatment_step(medications or [])
+    if current_step > 0 and len(steps) > current_step:
+        # Skip steps the patient is already on — recommend the next step
+        steps = steps[current_step:]
+    elif current_step > 0 and len(steps) == current_step:
+        # Patient is on the last available step — recommend specialist review
+        steps = []
 
+    # Build the recommendation text
+    parts = []
+
+    # Format immediate actions (diagnoses, treatment decisions)
+    if immediate:
+        if len(immediate) == 1:
+            parts.append(immediate[0])
+        elif len(immediate) == 2:
+            parts.append(f"{immediate[0]}, and {immediate[1][0].lower() + immediate[1][1:]}")
+        else:
+            parts.append(". ".join(immediate))
+
+    # Add only the first treatment step as the immediate recommendation
+    if steps:
+        if current_step > 0:
+            parts.append(f"Since current treatment has not achieved target BP, escalate to {steps[0]}")
+        else:
+            parts.append(steps[0])
+        if len(steps) > 1:
+            parts.append(f"If target BP is not achieved, subsequent steps include "
+                         f"{', then '.join(s for s in steps[1:])}")
+
+    actions_text = ". ".join(parts)
     recommendation = f"Based on NICE {guideline_id}, {actions_text}"
 
     # Append patient context

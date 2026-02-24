@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { ChatMessage, AnyGuideline, NICEGuideline } from "@/lib/types";
 import { PatientRecord } from "@/components/PatientInfoPanel";
 import {
@@ -23,8 +23,11 @@ import {
 } from "@/components/ui/shadcn-io/ai/prompt-input";
 import { Response } from "@/components/ui/shadcn-io/ai/response";
 import { Loader } from "@/components/ui/shadcn-io/ai/loader";
-import { PlusIcon, Info } from "lucide-react";
+import { PlusIcon, Info, ChevronDown, ChevronUp, GitBranch } from "lucide-react";
 import RuleExplanationModal from "./RuleExplanationModal";
+
+const BACKEND_WS_URL = process.env.NEXT_PUBLIC_BACKEND_WS_URL || "ws://localhost:8000";
+const BACKEND_HTTP_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
 // Type guard to check if guideline is NICE format
 function isNICEGuideline(guideline: AnyGuideline): guideline is NICEGuideline {
@@ -38,6 +41,96 @@ interface ChatPanelProps {
     selectedPatient?: PatientRecord | null;
 }
 
+// Parse backend pathway steps like "n1(action)" into human-readable format
+function parsePathwayStep(step: string): { nodeId: string; decision: string; isAction: boolean } {
+    const match = step.match(/^(n\d+)\((.+)\)$/);
+    if (!match) return { nodeId: step, decision: "", isAction: false };
+    return {
+        nodeId: match[1],
+        decision: match[2],
+        isAction: match[2] === "action",
+    };
+}
+
+function PathwayViewer({ pathway, guidelineId, guideline }: { pathway: string[]; guidelineId?: string; guideline?: AnyGuideline | null }) {
+    const [expanded, setExpanded] = useState(false);
+    const steps = pathway.map(parsePathwayStep);
+
+    // Build node text lookup from guideline data
+    const nodeTextMap: Record<string, string> = {};
+    if (guideline && isNICEGuideline(guideline) && guideline.nodes) {
+        for (const node of guideline.nodes) {
+            nodeTextMap[node.id] = node.text;
+        }
+    }
+
+    return (
+        <div className="mt-3">
+            <button
+                onClick={() => setExpanded(!expanded)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors shadow-sm"
+            >
+                <GitBranch className="w-3.5 h-3.5" />
+                {guidelineId ? `${guidelineId} Decision Path` : "View Decision Path"}
+                {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </button>
+
+            {expanded && (
+                <div className="mt-2 p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+                    <div className="space-y-0.5">
+                        {steps.map((step, i) => {
+                            const isLast = i === steps.length - 1;
+                            const nodeText = nodeTextMap[step.nodeId] || "";
+
+                            let badgeColor = "bg-gray-100 text-gray-600";
+                            let lineColor = "bg-slate-300";
+                            let dotColor = "bg-gray-400";
+
+                            if (step.isAction) {
+                                badgeColor = "bg-green-100 text-green-700";
+                                dotColor = "bg-green-500";
+                            } else if (step.decision === "yes") {
+                                badgeColor = "bg-blue-100 text-blue-700";
+                                dotColor = "bg-blue-500";
+                                lineColor = "bg-blue-300";
+                            } else if (step.decision === "no") {
+                                badgeColor = "bg-orange-100 text-orange-700";
+                                dotColor = "bg-orange-400";
+                                lineColor = "bg-orange-300";
+                            } else if (step.decision === "missing_variable") {
+                                badgeColor = "bg-amber-100 text-amber-700";
+                                dotColor = "bg-amber-500";
+                            }
+
+                            return (
+                                <div key={i} className="flex items-start gap-3">
+                                    {/* Vertical timeline */}
+                                    <div className="flex flex-col items-center w-3 flex-shrink-0 pt-1">
+                                        <div className={`w-2.5 h-2.5 rounded-full ${dotColor} flex-shrink-0`} />
+                                        {!isLast && <div className={`w-px flex-1 min-h-[16px] ${lineColor}`} />}
+                                    </div>
+                                    {/* Content */}
+                                    <div className="flex flex-col gap-0.5 pb-2 min-w-0">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-slate-400 font-mono text-[10px]">{step.nodeId}</span>
+                                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${badgeColor}`}>
+                                                {step.isAction ? "action" : step.decision === "missing_variable" ? "needs data" : step.decision}
+                                            </span>
+                                        </div>
+                                        {nodeText && (
+                                            <span className="text-slate-700 text-xs leading-snug">{nodeText}</span>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
 export default function ChatPanel({ guideline, mode, selectedPatient }: ChatPanelProps) {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [input, setInput] = useState("");
@@ -46,25 +139,175 @@ export default function ChatPanel({ guideline, mode, selectedPatient }: ChatPane
     const [sessionId, setSessionId] = useState(() => Date.now());
     const [explanationPath, setExplanationPath] = useState<string[]>([]);
     const [isExplanationOpen, setIsExplanationOpen] = useState(false);
+    const [wsConnected, setWsConnected] = useState(false);
+    const [backendPatientId, setBackendPatientId] = useState<string | null>(null);
+    const wsRef = useRef<WebSocket | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
     const initializedRef = useRef(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+
+    // Resolve backend patient UUID from frontend patient record
+    useEffect(() => {
+        if (!selectedPatient) {
+            setBackendPatientId(null);
+            return;
+        }
+
+        async function resolvePatient() {
+            try {
+                const res = await fetch(`${BACKEND_HTTP_URL}/patients`);
+                if (!res.ok) return;
+                const patients = await res.json();
+                // Match by name (first_name + last_name)
+                const nameParts = selectedPatient!.name.split(" ");
+                const match = patients.find((p: { first_name: string; last_name: string }) =>
+                    p.first_name === nameParts[0] && p.last_name === nameParts.slice(1).join(" ")
+                );
+                if (match) {
+                    setBackendPatientId(match.id);
+                }
+            } catch (err) {
+                console.warn("Failed to resolve backend patient:", err);
+            }
+        }
+        resolvePatient();
+    }, [selectedPatient]);
+
+    // WebSocket connection management
+    const connectWebSocket = useCallback((patientId: string) => {
+        // Close existing connection
+        if (wsRef.current) {
+            wsRef.current.close();
+            wsRef.current = null;
+        }
+
+        const ws = new WebSocket(`${BACKEND_WS_URL}/ws/chat/${patientId}`);
+
+        ws.onopen = () => {
+            console.log("WebSocket connected to backend for patient", patientId);
+            setWsConnected(true);
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+
+                if (data.type === "error") {
+                    const errorMsg: ChatMessage = {
+                        role: "assistant",
+                        content: `Error: ${data.detail || "Unknown error from backend"}`,
+                    };
+                    setMessages((prev) => [...prev, errorMsg]);
+                    setIsLoading(false);
+                    return;
+                }
+
+                // Skip user message echoes (backend broadcasts user msgs back)
+                if (data.type === "message" && data.message?.role === "user") {
+                    return;
+                }
+
+                // Handle assistant responses (clarification_question or final)
+                if (data.message && data.message.role === "assistant") {
+                    const content = data.message.content || "";
+                    const payload = data.payload || {};
+
+                    let displayContent = content;
+
+                    // For final recommendations, include guideline info
+                    if (payload.type === "final") {
+                        const guideline = payload.selected_guideline || "";
+                        const citation = payload.meta?.citation || "";
+                        if (citation && !displayContent.includes(citation)) {
+                            displayContent += `\n\nThis recommendation is from NICE ${citation}.`;
+                        } else if (guideline && !displayContent.includes(guideline)) {
+                            displayContent += `\n\nBased on NICE ${guideline}.`;
+                        }
+                    }
+
+                    // For clarification questions, show what we know so far
+                    if (payload.type === "clarification_question" && payload.selected_guideline) {
+                        const vars = payload.extracted_variables || {};
+                        const varCount = Object.keys(vars).length;
+                        if (varCount > 0) {
+                            displayContent += `\n\n*[Guideline: ${payload.selected_guideline} | Variables collected: ${varCount}]*`;
+                        }
+                    }
+
+                    const assistantMsg: ChatMessage = {
+                        role: "assistant",
+                        content: displayContent,
+                        ...(payload.type === "final" && payload.pathway_walked?.length > 0 && {
+                            pathwayWalked: payload.pathway_walked,
+                            selectedGuideline: payload.selected_guideline,
+                        }),
+                    };
+                    setMessages((prev) => [...prev, assistantMsg]);
+                    setIsLoading(false);
+                    setStreamingMessage("");
+                }
+            } catch (err) {
+                console.error("Failed to parse WebSocket message:", err);
+            }
+        };
+
+        ws.onclose = () => {
+            console.log("WebSocket disconnected");
+            setWsConnected(false);
+        };
+
+        ws.onerror = (err) => {
+            console.error("WebSocket error:", err);
+            setWsConnected(false);
+        };
+
+        wsRef.current = ws;
+    }, []);
+
+    // Connect/reconnect WebSocket when backend patient ID changes
+    useEffect(() => {
+        if (backendPatientId) {
+            connectWebSocket(backendPatientId);
+        }
+
+        return () => {
+            if (wsRef.current) {
+                wsRef.current.close();
+                wsRef.current = null;
+            }
+        };
+    }, [backendPatientId, sessionId, connectWebSocket]);
 
     // Reset initialized ref when guideline changes
     useEffect(() => {
         initializedRef.current = false;
     }, [guideline]);
 
-    // Send initial greeting request when component mounts
+    // Show greeting when guideline and patient are ready
     useEffect(() => {
         if (guideline && !initializedRef.current) {
             initializedRef.current = true;
-            sendInitialGreeting();
+
+            if (backendPatientId && wsConnected) {
+                // Backend connected — show greeting, user types symptoms
+                const greeting: ChatMessage = {
+                    role: "assistant",
+                    content: `Hello! I'm your clinical decision support assistant powered by NICE guidelines. I have **${selectedPatient?.name}**'s records loaded.\n\nPlease describe the patient's symptoms and I'll run triage, select the appropriate guideline, and walk the decision tree to provide a recommendation.`,
+                };
+                setMessages([greeting]);
+            } else if (backendPatientId && !wsConnected) {
+                // Still connecting
+                setMessages([]);
+            } else {
+                // No backend patient — fall back to direct OpenAI
+                sendInitialGreetingFallback();
+            }
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [guideline, sessionId]);
+    }, [guideline, sessionId, backendPatientId, wsConnected]);
 
-    const sendInitialGreeting = async () => {
+    // Fallback: direct OpenAI chat (when no patient selected / backend not available)
+    const sendInitialGreetingFallback = async () => {
         if (!guideline) return;
 
         setIsLoading(true);
@@ -76,12 +319,7 @@ export default function ChatPanel({ guideline, mode, selectedPatient }: ChatPane
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    messages: [
-                        {
-                            role: "user",
-                            content: "START_CONVERSATION",
-                        },
-                    ],
+                    messages: [{ role: "user", content: "START_CONVERSATION" }],
                     guideline,
                     decision: null,
                     mode,
@@ -98,76 +336,40 @@ export default function ChatPanel({ guideline, mode, selectedPatient }: ChatPane
                 signal: abortController.signal,
             });
 
-            if (!response.ok) {
-                let errorMessage = `HTTP error! status: ${response.status}`;
-                try {
-                    const errorData = await response.json();
-                    if (errorData.error) {
-                        errorMessage = errorData.error;
-                    }
-                } catch {
-                    const errorText = await response.text();
-                    if (errorText) {
-                        errorMessage = errorText;
-                    }
-                }
-                console.error("Initial greeting failed:", errorMessage);
-                throw new Error(errorMessage);
-            }
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
             const reader = response.body?.getReader();
             const decoder = new TextDecoder();
-
-            if (!reader) {
-                throw new Error("No response body");
-            }
+            if (!reader) throw new Error("No response body");
 
             let accumulatedMessage = "";
-
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
-
                 const chunk = decoder.decode(value, { stream: true });
-                const lines = chunk.split("\n");
-
-                for (const line of lines) {
+                for (const line of chunk.split("\n")) {
                     if (line.startsWith("data: ")) {
                         const data = line.slice(6);
-                        if (data === "[DONE]") {
-                            continue;
-                        }
+                        if (data === "[DONE]") continue;
                         try {
                             const parsed = JSON.parse(data);
                             if (parsed.content) {
                                 accumulatedMessage += parsed.content;
                                 setStreamingMessage(accumulatedMessage);
                             }
-                        } catch {
-                            // Skip invalid JSON
-                        }
+                        } catch { /* skip */ }
                     }
                 }
             }
 
-            const assistantMessage: ChatMessage = {
-                role: "assistant",
-                content: accumulatedMessage,
-            };
-
-            setMessages([assistantMessage]);
+            setMessages([{ role: "assistant", content: accumulatedMessage }]);
             setStreamingMessage("");
         } catch (error) {
-            if (error instanceof Error && error.name === "AbortError") {
-                return;
-            }
-            console.error("Initial greeting error:", error);
-            // Fallback greeting on error
-            const fallbackGreeting: ChatMessage = {
+            if (error instanceof Error && error.name === "AbortError") return;
+            setMessages([{
                 role: "assistant",
                 content: `Hello! I'm your clinical decision support assistant for **${guideline.name}**. How can I help you today?`,
-            };
-            setMessages([fallbackGreeting]);
+            }]);
             setStreamingMessage("");
         } finally {
             setIsLoading(false);
@@ -183,21 +385,23 @@ export default function ChatPanel({ guideline, mode, selectedPatient }: ChatPane
         initializedRef.current = false;
     };
 
-    const handleSend = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!input.trim() || !guideline) return;
+    // Send via WebSocket (backend LangGraph pipeline)
+    const sendViaWebSocket = (text: string) => {
+        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+            console.error("WebSocket not connected");
+            return;
+        }
 
-        const userMessage: ChatMessage = {
+        wsRef.current.send(JSON.stringify({
             role: "user",
-            content: input,
-        };
+            content: text,
+        }));
+    };
 
-        setMessages((prev) => [...prev, userMessage]);
-        setInput("");
-        setIsLoading(true);
-        setStreamingMessage("");
+    // Send via fallback direct OpenAI API
+    const sendViaFallback = async (userMessage: ChatMessage) => {
+        if (!guideline) return;
 
-        // Create abort controller for this request
         abortControllerRef.current = new AbortController();
 
         try {
@@ -222,81 +426,66 @@ export default function ChatPanel({ guideline, mode, selectedPatient }: ChatPane
                 signal: abortControllerRef.current.signal,
             });
 
-            if (!response.ok) {
-                let errorMessage = `HTTP error! status: ${response.status}`;
-                try {
-                    const errorData = await response.json();
-                    if (errorData.error) {
-                        errorMessage = errorData.error;
-                    }
-                } catch {
-                    const errorText = await response.text();
-                    if (errorText) {
-                        errorMessage = errorText;
-                    }
-                }
-                console.error("Chat request failed:", errorMessage);
-                throw new Error(errorMessage);
-            }
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
             const reader = response.body?.getReader();
             const decoder = new TextDecoder();
-
-            if (!reader) {
-                throw new Error("No response body");
-            }
+            if (!reader) throw new Error("No response body");
 
             let accumulatedMessage = "";
-
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
-
                 const chunk = decoder.decode(value, { stream: true });
-                const lines = chunk.split("\n");
-
-                for (const line of lines) {
+                for (const line of chunk.split("\n")) {
                     if (line.startsWith("data: ")) {
                         const data = line.slice(6);
-                        if (data === "[DONE]") {
-                            continue;
-                        }
+                        if (data === "[DONE]") continue;
                         try {
                             const parsed = JSON.parse(data);
                             if (parsed.content) {
                                 accumulatedMessage += parsed.content;
                                 setStreamingMessage(accumulatedMessage);
                             }
-                        } catch {
-                            // Skip invalid JSON
-                        }
+                        } catch { /* skip */ }
                     }
                 }
             }
 
-            // Add final message to messages array
-            const assistantMessage: ChatMessage = {
-                role: "assistant",
-                content: accumulatedMessage,
-            };
-
-            setMessages((prev) => [...prev, assistantMessage]);
+            setMessages((prev) => [...prev, { role: "assistant", content: accumulatedMessage }]);
             setStreamingMessage("");
         } catch (error) {
-            if (error instanceof Error && error.name === "AbortError") {
-                // Request was aborted, don't show error
-                return;
-            }
-            const errorMessage: ChatMessage = {
+            if (error instanceof Error && error.name === "AbortError") return;
+            setMessages((prev) => [...prev, {
                 role: "assistant",
-                content: `Error: ${error instanceof Error ? error.message : "Unknown error"
-                    }. Please try again.`,
-            };
-            setMessages((prev) => [...prev, errorMessage]);
+                content: `Error: ${error instanceof Error ? error.message : "Unknown error"}. Please try again.`,
+            }]);
             setStreamingMessage("");
         } finally {
-            setIsLoading(false);
             abortControllerRef.current = null;
+        }
+    };
+
+    const handleSend = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!input.trim() || !guideline) return;
+
+        const userMessage: ChatMessage = { role: "user", content: input };
+
+        setMessages((prev) => [...prev, userMessage]);
+        setInput("");
+        setIsLoading(true);
+        setStreamingMessage("");
+
+        const useBackend = backendPatientId && wsConnected && wsRef.current?.readyState === WebSocket.OPEN;
+
+        if (useBackend) {
+            // Send through backend LangGraph pipeline
+            sendViaWebSocket(input);
+        } else {
+            // Fallback: direct OpenAI via Next.js API route
+            await sendViaFallback(userMessage);
+            setIsLoading(false);
         }
     };
 
@@ -311,8 +500,16 @@ export default function ChatPanel({ guideline, mode, selectedPatient }: ChatPane
             if (abortControllerRef.current) {
                 abortControllerRef.current.abort();
             }
+            if (wsRef.current) {
+                wsRef.current.close();
+            }
         };
     }, []);
+
+    // Connection status indicator
+    const connectionStatus = backendPatientId
+        ? wsConnected ? "pipeline" : "connecting"
+        : "direct";
 
     return (
         <div className="flex flex-col h-full bg-gray-50">
@@ -377,6 +574,15 @@ export default function ChatPanel({ guideline, mode, selectedPatient }: ChatPane
                                             />
                                             <MessageContent>
                                                 <Response>{displayContent}</Response>
+                                                {/* Backend pipeline pathway viewer */}
+                                                {message.pathwayWalked && message.pathwayWalked.length > 0 && (
+                                                    <PathwayViewer
+                                                        pathway={message.pathwayWalked}
+                                                        guidelineId={message.selectedGuideline}
+                                                        guideline={guideline}
+                                                    />
+                                                )}
+                                                {/* Fallback direct-mode path viewer */}
                                                 {path && guideline && isNICEGuideline(guideline) && (
                                                     <button
                                                         onClick={() => {
@@ -421,7 +627,19 @@ export default function ChatPanel({ guideline, mode, selectedPatient }: ChatPane
                 <div className="w-full mx-auto">
                     {guideline ? (
                         <>
-                            <div className="flex justify-end mb-4">
+                            <div className="flex items-center justify-between mb-4">
+                                <div className="flex items-center gap-2">
+                                    <span className={`inline-block w-2 h-2 rounded-full ${
+                                        connectionStatus === "pipeline" ? "bg-green-500" :
+                                        connectionStatus === "connecting" ? "bg-yellow-500 animate-pulse" :
+                                        "bg-gray-400"
+                                    }`} />
+                                    <span className="text-xs text-gray-500">
+                                        {connectionStatus === "pipeline" ? "LangGraph Pipeline" :
+                                         connectionStatus === "connecting" ? "Connecting..." :
+                                         "Direct Mode"}
+                                    </span>
+                                </div>
                                 <PromptInputButton
                                     onClick={handleNewConversation}
                                     disabled={isLoading}
@@ -436,7 +654,7 @@ export default function ChatPanel({ guideline, mode, selectedPatient }: ChatPane
                                     onChange={(e) => setInput(e.target.value)}
                                     disabled={!guideline || isLoading}
                                     placeholder={selectedPatient
-                                        ? `Chatting about ${selectedPatient.name} (${selectedPatient.age}yo, ${selectedPatient.primaryConcern})...`
+                                        ? `Describe ${selectedPatient.name}'s symptoms...`
                                         : "Describe your patient's situation or ask a question..."
                                     }
                                 />

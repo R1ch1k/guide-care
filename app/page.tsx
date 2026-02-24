@@ -38,7 +38,7 @@ export default function Home() {
         null
     );
     const [mode, setMode] = useState<"strict" | "explain">("explain");
-    const [showGuidelineSelector, setShowGuidelineSelector] = useState(true); // Show by default
+    const [showGuidelineSelector, setShowGuidelineSelector] = useState(false); // Closed by default
     const [sessionKey, setSessionKey] = useState(0); // Used to reset chat when guideline changes
     const [isUploadingPdf, setIsUploadingPdf] = useState(false);
     const [uploadError, setUploadError] = useState<string | null>(null);
@@ -66,13 +66,10 @@ export default function Home() {
             }
             if (loaded.length > 0) {
                 setGuidelines(loaded);
-                // Default to NG136 (hypertension) if available, else first
-                const defaultGuideline = loaded.find(g => g.guideline_id.includes("ng136")) || loaded[0];
-                setActiveGuideline(defaultGuideline);
+                // No guideline selected by default — user picks after selecting a patient
             } else {
-                // Fallback to hardcoded hypertension guideline
+                // Fallback to hardcoded hypertension guideline (available but not selected)
                 setGuidelines([niceHypertensionGuideline]);
-                setActiveGuideline(niceHypertensionGuideline);
             }
         }
         loadGuidelines();

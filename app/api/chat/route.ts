@@ -220,20 +220,15 @@ STRICT INSTRUCTIONS:
    - Example: If you went n1 → n2 → n6, output \`[[PATH: n1, n2, n6]]\`
    - This is REQUIRED whenever you make a clinical recommendation
 
-8. **MANDATORY OUTPUT FORMAT**: When providing a final recommendation/decision, you MUST use this exact structure:
-
-### Diagnosis:
-[State the diagnosis or clinical finding]
-
-### Treatment:
-[Specific treatment recommendation]
-
-### Reason:
-[Clinical reasoning based on the rules. End with: "This recommendation is from ${guideline.citation}."]
+8. **MANDATORY OUTPUT FORMAT**: When providing a final recommendation/decision, write it as a clear, concise clinical recommendation in plain prose:
+   - Start with "Based on NICE ${guideline.guideline_id}, ..." and state the recommended action(s) directly from the rules you applied.
+   - If multiple actions apply, number them: (1) ... (2) ... (3) ...
+   - End the recommendation with: "This recommendation is from ${guideline.citation}."
+   - Then on a new line, include the PATH tag.
+   - **DO NOT** use "Diagnosis:", "Treatment:", or "Reason:" headers. Write the recommendation as natural clinical prose.
 
 \`[[PATH: node_id1, node_id2, ...]]\`
 
-**ALL FOUR COMPONENTS ARE REQUIRED**: Diagnosis, Treatment, Reason (with citation), and the PATH tag.
 **DO NOT** add any text after the PATH tag.`;
     }
 
@@ -383,20 +378,15 @@ INSTRUCTIONS:
    - Example: If you went n1 → n2 → n6, output \`[[PATH: n1, n2, n6]]\`
    - This is REQUIRED whenever you make a clinical recommendation
 
-7. **MANDATORY OUTPUT FORMAT**: When providing a final recommendation/decision, you MUST use this exact structure:
-
-### Diagnosis:
-[State the diagnosis or clinical finding]
-
-### Treatment:
-[Specific treatment recommendation]
-
-### Reason:
-[Clinical reasoning based on the rules. End with: "This recommendation is from ${guideline.citation}."]
+7. **MANDATORY OUTPUT FORMAT**: When providing a final recommendation/decision, write it as a clear, concise clinical recommendation in plain prose:
+   - Start with "Based on NICE ${guideline.guideline_id}, ..." and state the recommended action(s) directly from the rules you applied.
+   - If multiple actions apply, number them: (1) ... (2) ... (3) ...
+   - End the recommendation with: "This recommendation is from ${guideline.citation}."
+   - Then on a new line, include the PATH tag.
+   - **DO NOT** use "Diagnosis:", "Treatment:", or "Reason:" headers. Write the recommendation as natural clinical prose.
 
 \`[[PATH: node_id1, node_id2, ...]]\`
 
-**ALL FOUR COMPONENTS ARE REQUIRED**: Diagnosis, Treatment, Reason (with citation), and the PATH tag.
 **DO NOT** add any text after the PATH tag.
 
 Remember: You MUST follow the IF-THEN rules exactly as written. These are NICE guidelines and must be applied precisely.`;

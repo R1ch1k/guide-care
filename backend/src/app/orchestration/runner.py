@@ -55,6 +55,7 @@ async def process_user_turn(
             "final_recommendation": final,
             "selected_guideline": state.get("selected_guideline"),
             "extracted_variables": state.get("extracted_variables") or {},
+            "pathway_walked": state.get("pathway_walked") or [],
             "status": "completed",
         }
 
