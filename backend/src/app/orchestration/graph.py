@@ -16,6 +16,12 @@ def build_graph(deps):
 
     async def load_patient(state: ConversationState) -> dict:
         cid = state.get("conversation_id", "unknown")
+
+        # Skip if patient already loaded (follow-up turn)
+        if state.get("patient_record"):
+            log_step(cid, "load_patient_skip", reason="already_loaded")
+            return {}
+
         log_step(cid, "load_patient_start", patient_id=state.get("patient_id"))
 
         rec = await with_retry_timeout(
@@ -30,6 +36,15 @@ def build_graph(deps):
 
     async def triage(state: ConversationState) -> dict:
         cid = state.get("conversation_id", "unknown")
+
+        # Skip triage on follow-up turns if guideline already selected
+        # (e.g. clarification answer turns). Re-triaging on just the answer
+        # text loses context and picks the wrong guideline.
+        if state.get("selected_guideline") and state.get("triage_result"):
+            log_step(cid, "triage_skip", reason="guideline_already_selected",
+                     guideline=state.get("selected_guideline"))
+            return {}
+
         symptoms = _infer_symptoms(state)
         history_window = (state.get("conversation_history") or [])[-settings.MODEL_HISTORY_MAX_MESSAGES :]
 
@@ -129,6 +144,14 @@ def build_graph(deps):
 
     async def select_guideline(state: ConversationState) -> dict:
         cid = state.get("conversation_id", "unknown")
+
+        # Preserve guideline from previous turn (don't re-select mid-conversation)
+        existing = state.get("selected_guideline")
+        if existing:
+            log_step(cid, "select_guideline_skip", reason="already_selected",
+                     guideline=existing)
+            return {"selected_guideline": existing}
+
         log_step(cid, "select_guideline_start")
 
         guideline = await with_retry_timeout(
