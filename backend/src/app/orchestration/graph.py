@@ -37,12 +37,14 @@ def build_graph(deps):
     async def triage(state: ConversationState) -> dict:
         cid = state.get("conversation_id", "unknown")
 
-        # Skip triage on follow-up turns if guideline already selected
-        # (e.g. clarification answer turns). Re-triaging on just the answer
-        # text loses context and picks the wrong guideline.
-        if state.get("selected_guideline") and state.get("triage_result"):
-            log_step(cid, "triage_skip", reason="guideline_already_selected",
-                     guideline=state.get("selected_guideline"))
+        # Skip triage on follow-up turns if we already triaged on a previous turn.
+        # The graph may not have reached select_guideline yet (e.g. stopped at
+        # clarify to ask a question), but triage_result proves we already ran triage.
+        # Re-triaging on just the clarification answer text loses the original
+        # symptom context and picks the wrong guideline.
+        if state.get("triage_result"):
+            log_step(cid, "triage_skip", reason="already_triaged",
+                     suggested=state.get("triage_result", {}).get("suggested_guideline"))
             return {}
 
         symptoms = _infer_symptoms(state)
