@@ -469,7 +469,8 @@ export default function ChatPanel({ guideline, allGuidelines, mode, selectedPati
 
     const handleSend = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!input.trim() || !guideline) return;
+        const useBackend = backendPatientId && wsConnected && wsRef.current?.readyState === WebSocket.OPEN;
+        if (!input.trim() || (!guideline && !useBackend)) return;
 
         const userMessage: ChatMessage = { role: "user", content: input };
 
@@ -477,8 +478,6 @@ export default function ChatPanel({ guideline, allGuidelines, mode, selectedPati
         setInput("");
         setIsLoading(true);
         setStreamingMessage("");
-
-        const useBackend = backendPatientId && wsConnected && wsRef.current?.readyState === WebSocket.OPEN;
 
         if (useBackend) {
             // Send through backend LangGraph pipeline
@@ -516,35 +515,12 @@ export default function ChatPanel({ guideline, allGuidelines, mode, selectedPati
         <div className="flex flex-col h-full bg-gray-50">
             <Conversation className="flex-1">
                 <ConversationContent
-                    className={`py-6 px-4 sm:px-6 md:px-8 h-full ${!guideline || messages.length === 0
+                    className={`py-6 px-4 sm:px-6 md:px-8 h-full ${messages.length === 0
                             ? "flex items-center justify-center"
                             : ""
                         }`}
                 >
-                    {!guideline ? (
-                        <div className="flex flex-col items-center justify-center text-center max-w-2xl w-full">
-                            <svg
-                                className="w-24 h-24 mb-6 text-blue-400"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                            >
-                                <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                                />
-                            </svg>
-                            <p className="text-2xl font-bold text-gray-900 mb-3">
-                                Welcome to Clinical Decision Support
-                            </p>
-                            <p className="text-base text-gray-600 max-w-lg">
-                                Upload a clinical guideline PDF to start a new conversation. The
-                                AI will help you navigate through the guideline step-by-step.
-                            </p>
-                        </div>
-                    ) : messages.length === 0 ? (
+                    {messages.length === 0 ? (
                         <div className="flex flex-col items-center justify-center text-center text-gray-500 max-w-2xl w-full">
                             <Loader />
                             <p className="text-sm font-medium text-gray-700 mb-1 mt-4">
