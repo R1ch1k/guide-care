@@ -1,1 +1,250 @@
 
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, StateGraph
+
+from app.core.config import settings
+from app.orchestration.state import ConversationState
+from app.orchestration.utils import log_step, with_retry_timeout
+
+
+def _infer_symptoms(state: ConversationState) -> str:
+    return state.get("last_user_message") or state.get("current_symptoms") or ""
+
+
+def build_graph(deps):
+    # ---- node definitions (closures capture deps) ----
+
+    async def load_patient(state: ConversationState) -> dict:
+        cid = state.get("conversation_id", "unknown")
+        log_step(cid, "load_patient_start", patient_id=state.get("patient_id"))
+
+        rec = await with_retry_timeout(
+            deps["fetch_patient"],
+            state["patient_id"],
+            timeout=settings.AI_TIMEOUT_SECONDS,
+            retries=settings.AI_RETRIES,
+        )
+
+        log_step(cid, "load_patient_done")
+        return {"patient_record": rec}
+
+    async def triage(state: ConversationState) -> dict:
+        cid = state.get("conversation_id", "unknown")
+        symptoms = _infer_symptoms(state)
+        history_window = (state.get("conversation_history") or [])[-settings.MODEL_HISTORY_MAX_MESSAGES :]
+
+        log_step(cid, "triage_start", symptoms=symptoms)
+
+        triage_result = await with_retry_timeout(
+            deps["triage_agent"],
+            symptoms,
+            history_window,
+            state.get("patient_record", {}),
+            timeout=settings.AI_TIMEOUT_SECONDS,
+            retries=settings.AI_RETRIES,
+        )
+
+        urgent = triage_result.get("urgency") in {"high", "emergency", "999", "ed_now"}
+        log_step(cid, "triage_done", urgency=triage_result.get("urgency"), urgent=urgent)
+
+        return {
+            "triage_result": triage_result,
+            "urgent_escalation": bool(urgent),
+            "current_symptoms": symptoms,
+        }
+
+    async def clarify(state: ConversationState) -> dict:
+        """
+        WebSocket-friendly clarification loop (no interrupt()):
+        - ask one question -> END
+        - next user turn provides answer -> continue
+        """
+        cid = state.get("conversation_id", "unknown")
+        history_window = (state.get("conversation_history") or [])[-settings.MODEL_HISTORY_MAX_MESSAGES :]
+        pending = list(state.get("clarification_questions") or [])
+        answers = dict(state.get("clarification_answers") or {})
+        awaiting = bool(state.get("awaiting_clarification_answer", False))
+
+        # Ask next question and stop the graph
+        if pending and not awaiting:
+            q = pending[0]
+            log_step(cid, "clarify_ask", question=q)
+            return {
+                "awaiting_clarification_answer": True,
+                "assistant_event": {
+                    "type": "clarification_question",
+                    "content": q,
+                    "meta": {"question": q},
+                },
+            }
+
+        # Consume answer from current user turn
+        if pending and awaiting:
+            q = pending[0]
+            a = state.get("last_user_message", "")
+            answers[q] = a
+            remaining = pending[1:]
+            still_need = len(remaining) > 0
+
+            log_step(cid, "clarify_answer", question=q, remaining=len(remaining))
+            return {
+                "clarification_answers": answers,
+                "clarification_questions": remaining,
+                "awaiting_clarification_answer": False,
+                "clarification_needed": still_need,
+                "assistant_event": {},  # clear event
+            }
+
+        # No pending questions yet: ask clarifier to generate them
+        log_step(cid, "clarify_generate_start")
+        result = await with_retry_timeout(
+            deps["gpt_clarifier"],
+            state.get("current_symptoms", ""),
+            history_window,
+            state.get("patient_record", {}),
+            state.get("triage_result", {}),
+            answers,
+            timeout=settings.AI_TIMEOUT_SECONDS,
+            retries=settings.AI_RETRIES,
+        )
+
+        questions = (result.get("questions") or [])[:3]
+        if result.get("done") or not questions:
+            log_step(cid, "clarify_done", needed=False)
+            return {
+                "clarification_needed": False,
+                "clarification_questions": [],
+                "awaiting_clarification_answer": False,
+                "assistant_event": {},
+            }
+
+        log_step(cid, "clarify_done", needed=True, count=len(questions))
+        return {
+            "clarification_needed": True,
+            "clarification_questions": questions,
+            "clarification_answers": answers,
+            "awaiting_clarification_answer": False,
+            "assistant_event": {},
+        }
+
+    async def select_guideline(state: ConversationState) -> dict:
+        cid = state.get("conversation_id", "unknown")
+        log_step(cid, "select_guideline_start")
+
+        guideline = await with_retry_timeout(
+            deps["select_guideline"],
+            state.get("current_symptoms", ""),
+            state.get("triage_result", {}),
+            state.get("clarification_answers", {}),
+            state.get("patient_record", {}),
+            timeout=settings.AI_TIMEOUT_SECONDS,
+            retries=settings.AI_RETRIES,
+        )
+
+        log_step(cid, "select_guideline_done", guideline=guideline)
+        return {"selected_guideline": guideline}
+
+    async def extract_variables(state: ConversationState) -> dict:
+        cid = state.get("conversation_id", "unknown")
+        history_window = (state.get("conversation_history") or [])[-settings.MODEL_HISTORY_MAX_MESSAGES :]
+        log_step(cid, "extract_variables_start", guideline=state.get("selected_guideline"))
+
+        vars_ = await with_retry_timeout(
+            deps["extract_variables_20b"],
+            state["selected_guideline"],
+            history_window,
+            state.get("patient_record", {}),
+            state.get("clarification_answers", {}),
+            timeout=settings.AI_TIMEOUT_SECONDS,
+            retries=settings.AI_RETRIES,
+        )
+
+        log_step(cid, "extract_variables_done", var_count=len(vars_ or {}))
+        return {"extracted_variables": vars_ or {}}
+
+    async def walk_graph(state: ConversationState) -> dict:
+        cid = state.get("conversation_id", "unknown")
+        log_step(cid, "walk_graph_start", guideline=state.get("selected_guideline"))
+
+        out = await with_retry_timeout(
+            deps["walk_guideline_graph"],
+            state.get("selected_guideline", ""),
+            state.get("extracted_variables", {}),
+            state.get("current_node"),
+            state.get("pathway_walked", []),
+            timeout=settings.AI_TIMEOUT_SECONDS,
+            retries=settings.AI_RETRIES,
+        )
+
+        log_step(cid, "walk_graph_done", terminal=out.get("terminal", False))
+        return out
+
+    async def format_output(state: ConversationState) -> dict:
+        cid = state.get("conversation_id", "unknown")
+        guideline = state.get("selected_guideline") or "NICE"
+        log_step(cid, "format_output_start", guideline=guideline)
+
+        if state.get("urgent_escalation"):
+            rec = "Your symptoms may need urgent medical attention. If severe or worsening, seek emergency care immediately."
+            log_step(cid, "format_output_done", urgent=True)
+            return {"final_recommendation": rec, "citation": guideline}
+
+        out = await with_retry_timeout(
+            deps["format_output_20b"],
+            guideline,
+            state.get("triage_result", {}),
+            state.get("extracted_variables", {}),
+            state.get("pathway_walked", []),
+            state.get("patient_record", {}),
+            timeout=settings.AI_TIMEOUT_SECONDS,
+            retries=settings.AI_RETRIES,
+        )
+
+        log_step(cid, "format_output_done", urgent=False)
+        return {
+            "final_recommendation": out.get("final_recommendation", ""),
+            "citation": out.get("citation", guideline),
+        }
+
+    # ---- conditional routers ----
+
+    def after_triage(state: ConversationState) -> str:
+        return "format_output" if state.get("urgent_escalation") else "clarify"
+
+    def after_clarify(state: ConversationState) -> str:
+        # If a question was emitted, stop and wait for next user message
+        if (state.get("assistant_event") or {}).get("type") == "clarification_question":
+            return "end"
+        if state.get("clarification_needed"):
+            return "clarify"
+        return "select_guideline"
+
+    def after_walk(state: ConversationState) -> str:
+        return "format_output" if state.get("terminal") else "walk_graph"
+
+    # ---- build graph ----
+
+    sg = StateGraph(ConversationState)
+
+    sg.add_node("load_patient", load_patient)
+    sg.add_node("triage", triage)
+    sg.add_node("clarify", clarify)
+    sg.add_node("select_guideline", select_guideline)
+    sg.add_node("extract_variables", extract_variables)
+    sg.add_node("walk_graph", walk_graph)
+    sg.add_node("format_output", format_output)
+
+    sg.set_entry_point("load_patient")
+    sg.add_edge("load_patient", "triage")
+    sg.add_conditional_edges("triage", after_triage, {"clarify": "clarify", "format_output": "format_output"})
+    sg.add_conditional_edges(
+        "clarify",
+        after_clarify,
+        {"clarify": "clarify", "select_guideline": "select_guideline", "end": END},
+    )
+    sg.add_edge("select_guideline", "extract_variables")
+    sg.add_edge("extract_variables", "walk_graph")
+    sg.add_conditional_edges("walk_graph", after_walk, {"walk_graph": "walk_graph", "format_output": "format_output"})
+    sg.add_edge("format_output", END)
+
+    return sg.compile(checkpointer=MemorySaver())
