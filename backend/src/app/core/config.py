@@ -8,6 +8,10 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str
 
+    # OpenAI API (used for variable extraction, clarification, etc.)
+    OPENAI_API_KEY: Optional[str] = None
+    OPENAI_MODEL: str = "gpt-4o"
+
     # Optional external services
     TRIAGE_API_URL: Optional[str] = None
     LOCAL_20B_API_URL: Optional[str] = None
