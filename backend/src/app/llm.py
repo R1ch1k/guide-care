@@ -6,6 +6,7 @@ Toggle via LLM_MODE in .env:
   LLM_MODE=local  → local model (requires LOCAL_MODEL_URL running)
 
 All LLM interactions go through the `generate()` function.
+Triage always uses the API via `generate_api_only()` regardless of LLM_MODE.
 """
 
 import logging
@@ -112,4 +113,47 @@ async def _generate_local(
 
     result = response.choices[0].message.content or ""
     logger.debug("LLM response (local): %d chars", len(result))
+    return result
+
+
+async def generate_api_only(
+    prompt: str,
+    max_tokens: int = 400,
+    temperature: float = 0.0,
+    system_message: Optional[str] = None,
+) -> str:
+    """Always use OpenAI API regardless of LLM_MODE.
+
+    Used for triage — must use GPT-4 for reliable urgency classification.
+    """
+    if not settings.OPENAI_API_KEY:
+        raise ValueError(
+            "OPENAI_API_KEY not configured. Triage requires the OpenAI API."
+        )
+
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+
+    messages = []
+    if system_message:
+        messages.append({"role": "system", "content": system_message})
+    messages.append({"role": "user", "content": prompt})
+
+    logger.debug(
+        "LLM call (API-only triage): model=%s, max_tokens=%d, temp=%.1f",
+        settings.OPENAI_MODEL,
+        max_tokens,
+        temperature,
+    )
+
+    response = await client.chat.completions.create(
+        model=settings.OPENAI_MODEL,
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+
+    result = response.choices[0].message.content or ""
+    logger.debug("LLM response (API-only triage): %d chars", len(result))
     return result

@@ -28,7 +28,7 @@ from app.guideline_engine import (
     load_all_guidelines,
     traverse_guideline_graph,
 )
-from app.llm import generate
+from app.llm import generate, generate_api_only
 
 logger = logging.getLogger(__name__)
 
@@ -73,14 +73,165 @@ async def fetch_patient(patient_id: str) -> Dict[str, Any]:
 
 
 # ===================================================================
-# 2. Triage agent — keyword heuristics + optional external API
+# 2. Triage agent — GPT-4 API always (from medical_chatbot_triage_testing.ipynb)
 # ===================================================================
+
+TRIAGE_SYSTEM_PROMPT = """You are a medical triage assistant. Assess the urgency and suggest which NICE guideline applies.
+
+Patient symptoms: "{symptoms}"
+Patient age: {age}
+Medical history: {medical_history}
+Current medications: {medications}
+
+Available NICE guidelines:
+1. NG232 - Head injury: assessment and early management
+2. NG136 - Hypertension in adults: diagnosis and management
+3. NG91 - Otitis Media (Acute): Antimicrobial Prescribing
+4. NG133 - Hypertension in pregnancy: diagnosis and management
+5. NG112 - Urinary tract infection (recurrent): antimicrobial prescribing
+6. NG184 - Antimicrobial prescribing for human and animal bites
+7. NG222 - Depression in adults: preventing relapse
+8. NG81_GLAUCOMA - Chronic Open Angle Glaucoma Management
+9. NG81_HYPERTENSION - Management of Ocular Hypertension and Glaucoma
+10. NG84 - Sore Throat (Acute): Antimicrobial Prescribing
+
+---
+URGENCY ASSESSMENT ALGORITHM (FOLLOW IN ORDER):
+---
+
+STEP 1: Check for EMERGENCY RED FLAGS (if ANY present -> Emergency):
+- Neurological: Loss of consciousness, confusion, altered mental state, sudden vision loss
+- Cardiovascular: Severe chest pain, BP >=180/120 WITH any symptoms (headache/visual disturbance/chest pain)
+- Respiratory: Shortness of breath, airway compromise (drooling, stridor, unable to swallow)
+- Infection: Signs of sepsis (fever + confusion + tachypnea), mastoiditis (swelling behind ear causing protrusion)
+- Renal: Pyelonephritis (fever + flank/back pain + chills/rigors)
+- Ophthalmologic: Acute angle-closure glaucoma (sudden severe eye pain + vision loss +/- nausea)
+- Obstetric: Pregnant with BP >=160/110 OR severe headache + visual disturbance + swelling
+- Psychiatric: Suicidal ideation with plan/intent, severe self-harm risk
+- Trauma: Uncontrollable bleeding, severe injury
+
+STEP 2: If no red flags, check for URGENT criteria (same-day assessment):
+- Fever >38.5C with moderate pain/symptoms
+- Moderate infection signs without sepsis
+- BP 160-179/100-119 WITH mild symptoms
+- Pregnant with BP 150-159/100-109 OR BP 140-149/90-99 WITH proteinuria
+- Significant pain affecting function
+- Acute worsening of chronic condition
+- Recent injury with concerning features
+- Suspected bacterial infection needing antibiotics (strep throat, otitis media with fever)
+
+STEP 3: If not urgent, check for MODERATE criteria (1-3 day assessment):
+- Mild-moderate symptoms, stable condition
+- Low-grade fever (<38.5C) with mild symptoms
+- BP 140-159/90-99 WITHOUT symptoms
+- Pregnant with BP 140-149/90-99 WITHOUT proteinuria or symptoms
+- Manageable pain not affecting daily function
+- Stable chronic condition with minor change
+- Non-infected wound needing assessment
+
+STEP 4: Default to ROUTINE (routine GP appointment):
+- Very mild symptoms
+- Monitoring of stable chronic condition
+- Preventive care
+- Medication review for controlled condition
+- No concerning features
+
+---
+SPECIFIC CLINICAL CRITERIA:
+---
+
+**HYPERTENSION (NG136, NG133):**
+Emergency: BP >=180/120 WITH symptoms OR BP >=200/130 regardless
+Urgent: BP 160-179/100-119 WITH symptoms
+Moderate: BP 140-159/90-99 WITHOUT symptoms
+Routine: Controlled BP, regular monitoring
+
+**PREGNANCY HYPERTENSION (NG133):**
+Emergency: BP >=160/110 OR BP >=140/90 WITH severe headache + visual disturbance + swelling
+Urgent: BP 150-159/100-109 OR BP 140-149/90-99 WITH proteinuria
+Moderate: BP 140-149/90-99 WITHOUT proteinuria or symptoms
+Routine: BP <140/90
+
+**URINARY TRACT INFECTION (NG112):**
+Emergency: Pyelonephritis (fever + flank pain + chills), sepsis signs
+Urgent: Recurrent UTI with fever >38C
+Moderate: Recurrent UTI without fever
+Routine: Mild dysuria, no fever
+
+**OTITIS MEDIA (NG91):**
+Emergency: Mastoiditis, meningitis signs
+Urgent: Severe ear pain with fever >38.5C
+Moderate: Moderate ear pain, fever <38.5C
+Routine: Mild ear discomfort, no fever
+
+**SORE THROAT (NG84):**
+Emergency: Airway compromise (unable to swallow, drooling, stridor)
+Urgent: Severe throat pain with high fever >38.5C
+Moderate: Moderate throat pain with fever, white patches
+Routine: Mild sore throat, no fever
+
+**EYE CONDITIONS:**
+Use NG81_GLAUCOMA: diagnosed glaucoma, vision loss, optic nerve damage, acute angle-closure
+Use NG81_HYPERTENSION: elevated IOP without nerve damage, ocular hypertension, risk assessment
+
+**DEPRESSION (NG222):**
+Emergency: Active suicidal ideation with plan/intent
+Urgent: Relapse with significant functional impairment
+Moderate: Mild relapse symptoms
+Routine: Stable, routine review
+
+**HEAD INJURY (NG232):**
+Emergency: LOC >5min, vomiting >=2, confusion, amnesia, seizure
+Urgent: LOC <5min, persistent headache + dizziness
+Moderate: Mild headache, no neurological signs
+Routine: Very minor bump, no symptoms
+
+**BITES (NG184):**
+Emergency: Uncontrollable bleeding, deep bite with infection signs
+Urgent: Cat/dog bite that broke skin, moderate swelling
+Moderate: Puncture wound without severe features
+Routine: Superficial scratch
+
+---
+OUTPUT FORMAT (STRICT JSON):
+---
+{
+  "urgency": "emergency|urgent|moderate|routine",
+  "reasoning": "Brief clinical reasoning citing specific criteria used",
+  "suggested_guideline": "EXACT_ID (e.g., NG136, NG81_GLAUCOMA)",
+  "guideline_confidence": "high|medium|low",
+  "red_flags": ["specific red flag 1", "specific red flag 2"],
+  "assessment": "One sentence clinical assessment summary"
+}
+
+CRITICAL: Follow the 4-step urgency algorithm in order. Return ONLY valid JSON."""
+
+
+def _format_triage_prompt(
+    symptoms: str, patient_record: dict
+) -> str:
+    """Build patient-specific triage prompt."""
+    age = patient_record.get("age", "N/A")
+    history = ", ".join(patient_record.get("conditions", []) or patient_record.get("medical_history", [])) or "None"
+    meds = ", ".join(patient_record.get("medications", [])) or "None"
+    return (
+        f'Patient symptoms: "{symptoms}"\n'
+        f"Patient age: {age}\n"
+        f"Medical history: {history}\n"
+        f"Current medications: {meds}"
+    )
 
 
 async def triage_agent(
     symptoms: str, history: list, patient_record: dict
 ) -> Dict[str, Any]:
-    """Triage based on symptoms. Uses external API if configured, else heuristics."""
+    """LLM-based triage — ALWAYS uses GPT-4 API regardless of LLM_MODE.
+
+    Ported from medical_chatbot_triage_testing.ipynb.
+    Returns urgency (emergency/urgent/moderate/routine), suggested guideline,
+    reasoning, red flags, and assessment.
+    """
+    # External API override if configured
     if settings.TRIAGE_API_URL:
         import httpx
 
@@ -96,21 +247,78 @@ async def triage_agent(
             r.raise_for_status()
             return r.json()
 
-    # Heuristic fallback
-    s = (symptoms or "").lower()
-    urgent_words = [
-        "chest pain",
-        "shortness of breath",
-        "collapse",
-        "seizure",
-        "stroke",
-        "unconscious",
-        "severe bleeding",
-        "heart attack",
-    ]
-    if any(w in s for w in urgent_words):
-        return {"urgency": "high", "assessment": "Potentially urgent symptoms detected"}
-    return {"urgency": "moderate", "assessment": "Initial non-urgent triage (heuristic)"}
+    # Build system prompt with patient details filled in
+    age = patient_record.get("age", "N/A")
+    med_history = ", ".join(
+        patient_record.get("conditions", []) or patient_record.get("medical_history", [])
+    ) or "None"
+    meds = ", ".join(patient_record.get("medications", [])) or "None"
+
+    system_prompt = TRIAGE_SYSTEM_PROMPT.replace("{symptoms}", symptoms or "")
+    system_prompt = system_prompt.replace("{age}", str(age))
+    system_prompt = system_prompt.replace("{medical_history}", med_history)
+    system_prompt = system_prompt.replace("{medications}", meds)
+
+    user_prompt = _format_triage_prompt(symptoms, patient_record)
+
+    try:
+        raw = await generate_api_only(
+            user_prompt,
+            max_tokens=400,
+            temperature=0.0,
+            system_message=system_prompt,
+        )
+
+        # Strip markdown code fences if present
+        content = raw.strip()
+        if content.startswith("```"):
+            lines = content.split("\n")
+            lines = lines[1:]  # remove ```json
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            content = "\n".join(lines).strip()
+
+        result = json.loads(content)
+
+        # Normalise urgency to lowercase for graph.py
+        if "urgency" in result:
+            result["urgency"] = result["urgency"].lower()
+
+        # Ensure assessment field exists
+        if "assessment" not in result:
+            result["assessment"] = result.get("reasoning", "Triage complete")
+
+        logger.info(
+            "Triage result: urgency=%s, guideline=%s, red_flags=%s",
+            result.get("urgency"),
+            result.get("suggested_guideline"),
+            result.get("red_flags"),
+        )
+        return result
+
+    except (json.JSONDecodeError, Exception) as exc:
+        logger.warning("GPT-4 triage failed (%s), falling back to heuristics", exc)
+
+        # Keyword heuristic fallback
+        s = (symptoms or "").lower()
+        urgent_words = [
+            "chest pain", "shortness of breath", "collapse", "seizure",
+            "stroke", "unconscious", "severe bleeding", "heart attack",
+            "suicidal", "loss of consciousness", "drooling", "stridor",
+        ]
+        if any(w in s for w in urgent_words):
+            return {
+                "urgency": "emergency",
+                "assessment": "Potentially urgent symptoms detected (heuristic fallback)",
+                "suggested_guideline": "",
+                "red_flags": [w for w in urgent_words if w in s],
+            }
+        return {
+            "urgency": "moderate",
+            "assessment": "Initial non-urgent triage (heuristic fallback)",
+            "suggested_guideline": "",
+            "red_flags": [],
+        }
 
 
 # ===================================================================
@@ -214,6 +422,14 @@ async def select_guideline_fn(
     symptoms: str, triage: dict, answers: dict, patient_record: dict
 ) -> str:
     """Select the most appropriate NICE guideline for the patient's symptoms."""
+    # Use triage's suggested guideline if available and valid
+    triage_suggestion = (triage or {}).get("suggested_guideline", "")
+    if triage_suggestion:
+        g_data = get_guideline(triage_suggestion)
+        if g_data:
+            logger.info("Using triage-suggested guideline: %s", triage_suggestion)
+            return triage_suggestion
+
     s = (symptoms or "").lower()
 
     # Try keyword mapping first

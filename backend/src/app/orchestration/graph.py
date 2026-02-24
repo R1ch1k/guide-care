@@ -44,7 +44,7 @@ def build_graph(deps):
             retries=settings.AI_RETRIES,
         )
 
-        urgent = triage_result.get("urgency") in {"high", "emergency", "999", "ed_now"}
+        urgent = triage_result.get("urgency") in {"emergency", "high", "999", "ed_now"}
         log_step(cid, "triage_done", urgency=triage_result.get("urgency"), urgent=urgent)
 
         return {
