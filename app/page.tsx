@@ -13,6 +13,20 @@ import { niceHypertensionGuideline } from "@/lib/guidelines/nice-hypertension";
 import { Eye } from "lucide-react";
 import SampleInputModal from "@/components/SampleInputModal";
 
+// All NICE guideline JSON files in public/guidelines/
+const GUIDELINE_FILES = [
+    "ng84.json",
+    "ng91.json",
+    "ng112.json",
+    "ng133.json",
+    "ng136.json",
+    "ng184.json",
+    "ng222.json",
+    "ng232.json",
+    "ng81_chronic_glaucoma.json",
+    "ng81_ocular_hypertension.json",
+];
+
 // Type guard to check if guideline is NICE format
 function isNICEGuideline(guideline: AnyGuideline): guideline is NICEGuideline {
     return 'rules' in guideline && 'edges' in guideline;
@@ -35,10 +49,33 @@ export default function Home() {
     const [viewerGuideline, setViewerGuideline] = useState<NICEGuideline | null>(null);
     const [selectedPatient, setSelectedPatient] = useState<PatientRecord | null>(null);
 
-    // Load default guideline on mount
+    // Load all NICE guidelines from public/guidelines/ on mount
     useEffect(() => {
-        setGuidelines([niceHypertensionGuideline]);
-        setActiveGuideline(niceHypertensionGuideline);
+        async function loadGuidelines() {
+            const loaded: NICEGuideline[] = [];
+            for (const file of GUIDELINE_FILES) {
+                try {
+                    const res = await fetch(`/guidelines/${file}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        loaded.push(data as NICEGuideline);
+                    }
+                } catch {
+                    console.warn(`Failed to load guideline: ${file}`);
+                }
+            }
+            if (loaded.length > 0) {
+                setGuidelines(loaded);
+                // Default to NG136 (hypertension) if available, else first
+                const defaultGuideline = loaded.find(g => g.guideline_id.includes("ng136")) || loaded[0];
+                setActiveGuideline(defaultGuideline);
+            } else {
+                // Fallback to hardcoded hypertension guideline
+                setGuidelines([niceHypertensionGuideline]);
+                setActiveGuideline(niceHypertensionGuideline);
+            }
+        }
+        loadGuidelines();
     }, []);
     const [patientRecords, setPatientRecords] = useState<PatientRecord[]>([
         {
