@@ -25,6 +25,7 @@ export interface PatientRecord {
 interface PatientInfoPanelProps {
   records: PatientRecord[];
   onAddPatient: () => void;
+  onConnect?: () => void;
   selectedPatientId?: string | null;
   onSelectPatient?: (patient: PatientRecord) => void;
   className?: string;
@@ -44,6 +45,7 @@ const statusStyles: Record<PatientStatus, string> = {
 export default function PatientInfoPanel({
   records,
   onAddPatient,
+  onConnect,
   selectedPatientId,
   onSelectPatient,
   className,
@@ -63,6 +65,7 @@ export default function PatientInfoPanel({
           <div className="flex flex-wrap items-center justify-end gap-2">
             <button
               type="button"
+              onClick={onConnect}
               className="px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors"
             >
               Connect

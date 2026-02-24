@@ -12,6 +12,7 @@ import GuidelineViewer from "@/components/GuidelineViewer";
 import { niceHypertensionGuideline } from "@/lib/guidelines/nice-hypertension";
 import { Eye } from "lucide-react";
 import SampleInputModal from "@/components/SampleInputModal";
+import ConnectDataModal from "@/components/ConnectDataModal";
 
 // All NICE guideline JSON files in public/guidelines/
 const GUIDELINE_FILES = [
@@ -45,6 +46,7 @@ export default function Home() {
     const [showPatientPanel, setShowPatientPanel] = useState(true);
     const [isAddPatientOpen, setIsAddPatientOpen] = useState(false);
     const [isSampleInputOpen, setIsSampleInputOpen] = useState(false);
+    const [isConnectDataOpen, setIsConnectDataOpen] = useState(false);
     const [viewerGuideline, setViewerGuideline] = useState<NICEGuideline | null>(null);
     const [selectedPatient, setSelectedPatient] = useState<PatientRecord | null>(null);
 
@@ -493,6 +495,7 @@ export default function Home() {
                         <PatientInfoPanel
                             records={patientRecords}
                             onAddPatient={() => setIsAddPatientOpen(true)}
+                            onConnect={() => setIsConnectDataOpen(true)}
                             selectedPatientId={selectedPatient?.id}
                             onSelectPatient={(patient) => {
                                 setSelectedPatient(patient);
@@ -524,6 +527,10 @@ export default function Home() {
             <SampleInputModal
                 isOpen={isSampleInputOpen}
                 onClose={() => setIsSampleInputOpen(false)}
+            />
+            <ConnectDataModal
+                isOpen={isConnectDataOpen}
+                onClose={() => setIsConnectDataOpen(false)}
             />
         </div>
     );
