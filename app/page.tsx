@@ -37,7 +37,6 @@ export default function Home() {
     const [activeGuideline, setActiveGuideline] = useState<AnyGuideline | null>(
         null
     );
-    const [mode, setMode] = useState<"strict" | "explain">("explain");
     const [showGuidelineSelector, setShowGuidelineSelector] = useState(false); // Closed by default
     const [sessionKey, setSessionKey] = useState(0); // Used to reset chat when guideline changes
     const [isUploadingPdf, setIsUploadingPdf] = useState(false);
@@ -270,26 +269,6 @@ export default function Home() {
                             className="hidden sm:block h-6 w-px bg-gray-300"
                             aria-hidden="true"
                         ></div>
-                        <div className="grid grid-cols-2 sm:flex sm:flex-nowrap gap-2 w-full sm:w-auto">
-                            <button
-                                onClick={() => setMode("strict")}
-                                className={`px-5 py-2.5 text-sm font-medium rounded-lg transition-all shadow-sm hover:shadow ${mode === "strict"
-                                        ? "bg-blue-600 text-white"
-                                        : "bg-white text-gray-700 hover:bg-gray-100 border-2 border-gray-300"
-                                    }`}
-                            >
-                                📋 Strict
-                            </button>
-                            <button
-                                onClick={() => setMode("explain")}
-                                className={`px-5 py-2.5 text-sm font-medium rounded-lg transition-all shadow-sm hover:shadow ${mode === "explain"
-                                        ? "bg-blue-600 text-white"
-                                        : "bg-white text-gray-700 hover:bg-gray-100 border-2 border-gray-300"
-                                    }`}
-                            >
-                                💡 Explain
-                            </button>
-                        </div>
                         <button
                             onClick={() => setIsSampleInputOpen(true)}
                             className="px-5 py-2.5 text-sm font-medium rounded-lg bg-white text-gray-700 hover:bg-gray-100 border-2 border-gray-300 transition-all shadow-sm hover:shadow"
@@ -507,8 +486,6 @@ export default function Home() {
                             key={sessionKey}
                             guideline={activeGuideline}
                             allGuidelines={guidelines}
-                            mode={mode}
-                            onModeChange={setMode}
                             selectedPatient={selectedPatient}
                         />
                     }

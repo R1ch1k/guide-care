@@ -37,8 +37,6 @@ function isNICEGuideline(guideline: AnyGuideline): guideline is NICEGuideline {
 interface ChatPanelProps {
     guideline: AnyGuideline | null;
     allGuidelines?: AnyGuideline[];
-    mode: "strict" | "explain";
-    onModeChange: (mode: "strict" | "explain") => void;
     selectedPatient?: PatientRecord | null;
 }
 
@@ -132,7 +130,7 @@ function PathwayViewer({ pathway, guidelineId, guideline }: { pathway: string[];
     );
 }
 
-export default function ChatPanel({ guideline, allGuidelines, mode, selectedPatient }: ChatPanelProps) {
+export default function ChatPanel({ guideline, allGuidelines, selectedPatient }: ChatPanelProps) {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [input, setInput] = useState("");
     const [isLoading, setIsLoading] = useState(false);
@@ -323,7 +321,7 @@ export default function ChatPanel({ guideline, allGuidelines, mode, selectedPati
                     messages: [{ role: "user", content: "START_CONVERSATION" }],
                     guideline,
                     decision: null,
-                    mode,
+
                     patientContext: selectedPatient ? {
                         name: selectedPatient.name,
                         age: selectedPatient.age,
@@ -413,7 +411,7 @@ export default function ChatPanel({ guideline, allGuidelines, mode, selectedPati
                     messages: [...messages, userMessage],
                     guideline,
                     decision: null,
-                    mode,
+
                     patientContext: selectedPatient ? {
                         name: selectedPatient.name,
                         age: selectedPatient.age,
