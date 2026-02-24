@@ -279,30 +279,30 @@ export default function ChatPanel({ guideline, allGuidelines, mode, selectedPati
         };
     }, [backendPatientId, sessionId, connectWebSocket]);
 
-    // Reset initialized ref when guideline changes
+    // Reset initialized ref when guideline or patient changes
     useEffect(() => {
         initializedRef.current = false;
-    }, [guideline]);
+    }, [guideline, backendPatientId]);
 
-    // Show greeting when guideline and patient are ready
+    // Show greeting when patient is connected (guideline auto-selected by triage)
     useEffect(() => {
-        if (guideline && !initializedRef.current) {
-            initializedRef.current = true;
+        if (initializedRef.current) return;
 
-            if (backendPatientId && wsConnected) {
-                // Backend connected — show greeting, user types symptoms
-                const greeting: ChatMessage = {
-                    role: "assistant",
-                    content: `Hello! I'm your clinical decision support assistant powered by NICE guidelines. I have **${selectedPatient?.name}**'s records loaded.\n\nPlease describe the patient's symptoms and I'll run triage, select the appropriate guideline, and walk the decision tree to provide a recommendation.`,
-                };
-                setMessages([greeting]);
-            } else if (backendPatientId && !wsConnected) {
-                // Still connecting
-                setMessages([]);
-            } else {
-                // No backend patient — fall back to direct OpenAI
-                sendInitialGreetingFallback();
-            }
+        if (backendPatientId && wsConnected) {
+            initializedRef.current = true;
+            const greeting: ChatMessage = {
+                role: "assistant",
+                content: `Hello! I'm your clinical decision support assistant powered by NICE guidelines. I have **${selectedPatient?.name}**'s records loaded.\n\nPlease describe the patient's symptoms and I'll run triage, select the appropriate guideline, and walk the decision tree to provide a recommendation.`,
+            };
+            setMessages([greeting]);
+        } else if (!backendPatientId && !initializedRef.current) {
+            // No patient selected — show a generic welcome
+            initializedRef.current = true;
+            const welcome: ChatMessage = {
+                role: "assistant",
+                content: "Hello! I'm your clinical decision support assistant. Please select a patient from the panel on the right to get started.",
+            };
+            setMessages([welcome]);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [guideline, sessionId, backendPatientId, wsConnected]);
@@ -632,65 +632,47 @@ export default function ChatPanel({ guideline, allGuidelines, mode, selectedPati
 
             <div className="border-t border-gray-200 px-4 sm:px-6 md:px-8 pt-6 pb-8 bg-white shadow-lg">
                 <div className="w-full mx-auto">
-                    {guideline ? (
-                        <>
-                            <div className="flex items-center justify-between mb-4">
-                                <div className="flex items-center gap-2">
-                                    <span className={`inline-block w-2 h-2 rounded-full ${
-                                        connectionStatus === "pipeline" ? "bg-green-500" :
-                                        connectionStatus === "connecting" ? "bg-yellow-500 animate-pulse" :
-                                        "bg-gray-400"
-                                    }`} />
-                                    <span className="text-xs text-gray-500">
-                                        {connectionStatus === "pipeline" ? "LangGraph Pipeline" :
-                                         connectionStatus === "connecting" ? "Connecting..." :
-                                         "Direct Mode"}
-                                    </span>
-                                </div>
-                                <PromptInputButton
-                                    onClick={handleNewConversation}
-                                    disabled={isLoading}
-                                >
-                                    <PlusIcon className="w-4 h-4" />
-                                    New Conversation
-                                </PromptInputButton>
-                            </div>
-                            <PromptInput onSubmit={handleSend}>
-                                <PromptInputTextarea
-                                    value={input}
-                                    onChange={(e) => setInput(e.target.value)}
-                                    disabled={!guideline || isLoading}
-                                    placeholder={selectedPatient
-                                        ? `Describe ${selectedPatient.name}'s symptoms...`
-                                        : "Describe your patient's situation or ask a question..."
-                                    }
-                                />
-                                <PromptInputToolbar>
-                                    <PromptInputTools>
-                                        {/* Add any additional tools here */}
-                                    </PromptInputTools>
-                                    <PromptInputSubmit
-                                        disabled={!input.trim() || !guideline || isLoading}
-                                        status={isLoading ? "streaming" : undefined}
-                                    />
-                                </PromptInputToolbar>
-                            </PromptInput>
-                        </>
-                    ) : (
-                        <div className="flex items-center justify-center py-4 w-full">
-                            <div
-                                className="bg-gray-100 rounded-lg overflow-visible"
-                                style={{ padding: "1rem 2.5rem" }}
-                            >
-                                <p
-                                    className="text-sm text-gray-600 whitespace-nowrap tracking-wide leading-relaxed antialiased"
-                                    style={{ letterSpacing: "0.05em" }}
-                                >
-                                    Select a guideline to start
-                                </p>
-                            </div>
+                    <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                            <span className={`inline-block w-2 h-2 rounded-full ${
+                                connectionStatus === "pipeline" ? "bg-green-500" :
+                                connectionStatus === "connecting" ? "bg-yellow-500 animate-pulse" :
+                                "bg-gray-400"
+                            }`} />
+                            <span className="text-xs text-gray-500">
+                                {connectionStatus === "pipeline" ? "LangGraph Pipeline" :
+                                 connectionStatus === "connecting" ? "Connecting..." :
+                                 "Direct Mode"}
+                            </span>
                         </div>
-                    )}
+                        <PromptInputButton
+                            onClick={handleNewConversation}
+                            disabled={isLoading}
+                        >
+                            <PlusIcon className="w-4 h-4" />
+                            New Conversation
+                        </PromptInputButton>
+                    </div>
+                    <PromptInput onSubmit={handleSend}>
+                        <PromptInputTextarea
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            disabled={isLoading}
+                            placeholder={selectedPatient
+                                ? `Describe ${selectedPatient.name}'s symptoms...`
+                                : "Select a patient, then describe their symptoms..."
+                            }
+                        />
+                        <PromptInputToolbar>
+                            <PromptInputTools>
+                                {/* Add any additional tools here */}
+                            </PromptInputTools>
+                            <PromptInputSubmit
+                                disabled={!input.trim() || isLoading}
+                                status={isLoading ? "streaming" : undefined}
+                            />
+                        </PromptInputToolbar>
+                    </PromptInput>
                 </div>
             </div>
             {guideline && isNICEGuideline(guideline) && (

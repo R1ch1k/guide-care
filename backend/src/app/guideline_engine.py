@@ -931,16 +931,29 @@ def format_recommendation_template(
             seen.add(a_lower)
             unique_actions.append(a.strip())
 
-    # Remove substring-contained actions (keep the longer version)
+    # Remove actions that overlap significantly with another longer action.
+    # Check both full substring and trailing-overlap (shared ending words).
+    def _has_significant_overlap(shorter: str, longer: str) -> bool:
+        s, l = shorter.lower(), longer.lower()
+        if s in l:
+            return True
+        # Check if the last 8+ words of shorter match the end of longer
+        s_words = s.split()
+        l_words = l.split()
+        if len(s_words) >= 8:
+            tail = " ".join(s_words[-8:])
+            if tail in " ".join(l_words[-12:]):
+                return True
+        return False
+
     filtered = []
     for i, a in enumerate(unique_actions):
-        a_lower = a.lower()
-        is_subset = False
+        is_redundant = False
         for j, b in enumerate(unique_actions):
-            if i != j and a_lower in b.lower() and len(a) < len(b):
-                is_subset = True
+            if i != j and len(a) < len(b) and _has_significant_overlap(a, b):
+                is_redundant = True
                 break
-        if not is_subset:
+        if not is_redundant:
             filtered.append(a)
     unique_actions = filtered if filtered else unique_actions
 
