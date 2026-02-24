@@ -1,13 +1,12 @@
 fastapi
 uvicorn[standard]
-SQLAlchemy>=1.4
+SQLAlchemy>=2.0,<3.0
 asyncpg
 httpx
 python-dotenv
-pydantic
+pydantic>=2.6,<3.0
+pydantic-settings>=2.2,<3.0
 alembic
 typing_extensions
 psycopg2-binary
-pydantic-settings>=2.2,<3.0
-langgraph
-pydantic-settings
+langgraph>=0.2.0
