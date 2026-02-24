@@ -1,98 +1,108 @@
-# NICE Guidelines Processing System
+# NICE Guidelines — Data Format
 
 ## Overview
 
-This system processes NICE (National Institute for Health and Care Excellence) clinical guidelines from PDF flowcharts and extracts them into machine-readable formats.
+The system uses 10 NICE clinical guidelines, each stored as two JSON files:
 
-## Output Format
+- **Guideline JSON** (`backend/data/guidelines/<id>.json`) — the decision tree structure
+- **Evaluator JSON** (`backend/data/evaluators/<id>_eval.json`) — condition evaluation logic
 
-When you upload a NICE guideline PDF, the system extracts:
+## Guideline JSON Structure
 
-### 1. IF-THEN Rules
-Concise logical rules that express the clinical decision pathways:
-```
-IF BP ≥ 180/120 AND retinal haemorrhage OR papilloedema OR life-threatening symptoms THEN refer for same-day specialist review.
-IF BP ≥ 180/120 AND target-organ damage (no emergency) THEN start treatment immediately.
-```
-
-### 2. JSON Decision Graph
-A structured representation with nodes and edges:
 ```json
 {
-  "guideline_id": "nice_hypertension_ng136",
-  "name": "Hypertension in adults: diagnosis and management",
-  "version": "NG136 (2023)",
-  "citation": "NICE guideline [NG136]",
-  "citation_url": "https://www.nice.org.uk/guidance/ng136",
-  "rules": [
-    "IF BP ≥ 180/120 AND emergency signs THEN refer for same-day specialist review.",
-    "IF BP ≥ 180/120 AND no emergency THEN start treatment immediately."
-  ],
+  "guideline_id": "NG84",
+  "name": "Sore throat (acute): antimicrobial prescribing",
+  "version": "NG84 (2018)",
+  "citation": "NICE guideline [NG84]",
+  "citation_url": "https://www.nice.org.uk/guidance/ng84",
   "nodes": [
-    {"id": "n1", "type": "condition", "text": "BP ≥ 180/120?"},
-    {"id": "n2", "type": "condition", "text": "Emergency signs present?"},
-    {"id": "n3", "type": "action", "text": "Refer for same-day specialist review"},
-    {"id": "n4", "type": "action", "text": "Start treatment immediately"}
+    {
+      "id": "n1",
+      "type": "condition",
+      "text": "FeverPAIN score ≥ 4 or Centor score ≥ 3?"
+    },
+    {
+      "id": "n5",
+      "type": "action",
+      "text": "Consider delayed antibiotic prescription..."
+    }
   ],
   "edges": [
     {"from": "n1", "to": "n2", "label": "yes"},
-    {"from": "n2", "to": "n3", "label": "yes"},
-    {"from": "n2", "to": "n4", "label": "no"}
+    {"from": "n1", "to": "n3", "label": "no"}
   ]
 }
 ```
 
-## Configuration
+### Node Types
 
-### Model Selection
-Edit `.env.local` to set your preferred OpenAI model:
-```bash
-OPENAI_MODEL=gpt-4.5-turbo-preview
+- **condition** — decision point evaluated against patient variables
+- **action** — terminal recommendation node (the output shown to the user)
+
+### Edge Labels
+
+- **yes** — condition evaluates to true
+- **no** — condition evaluates to false
+- **next** — unconditional progression
+
+## Evaluator JSON Structure
+
+Maps each condition node to its evaluation logic:
+
+```json
+{
+  "n1": {
+    "variable": "feverpain_score",
+    "operator": ">=",
+    "value": 4
+  },
+  "n2": {
+    "and": [
+      {"variable": "age", "operator": ">=", "value": 18},
+      {"variable": "immunocompromised", "operator": "==", "value": false}
+    ]
+  }
+}
 ```
 
-### API Key
-Add your OpenAI API key to `.env.local`:
-```bash
-OPENAI_API_KEY=sk-proj-...
-```
+### Supported Condition Types
 
-## Extraction Rules
+| Type | Example |
+|------|---------|
+| Simple comparison | `{"variable": "age", "operator": ">=", "value": 65}` |
+| Boolean check | `{"variable": "pregnant", "operator": "==", "value": true}` |
+| BP comparison | `{"variable": "bp", "operator": ">=", "value": "180/120"}` |
+| BP range | `{"variable": "bp", "operator": "range", "value": "140/90-179/119"}` |
+| AND compound | `{"and": [{...}, {...}]}` |
+| OR compound | `{"conditions": [{...}, {...}], "match": "any"}` |
+| Treatment type | `{"variable": "treatment_type", "operator": "==", "value": "monotherapy"}` |
 
-The system follows these principles when processing NICE guidelines:
+## Guidelines Included
 
-1. **Preserve clinical logic exactly** - All thresholds, comparators, and numerical values are kept precise
-2. **Merge redundant branches** - Parallel pathways with identical outcomes are combined
-3. **Avoid unnecessary qualifiers** - Demographic splits that don't change outcomes are simplified
-4. **Maintain NICE-style phrasing** - Uses clinical verbs like "Offer", "Consider", "Refer", "Assess"
-5. **Strip irrelevant text** - Removes footers, references, URLs, and formatting noise
-6. **Compress decision logic** - Expresses equivalent decisions concisely
-7. **Preserve quantitative precision** - Keeps all numbers, ranges, units, and comparators exact
-8. **No commentary** - Outputs only clean logical structure
+| File | ID | Guideline |
+|------|----|-----------|
+| ng84.json | NG84 | Sore throat — antimicrobial prescribing |
+| ng91.json | NG91 | Otitis media — ear infection |
+| ng112.json | NG112 | UTI (lower) — urinary tract infection |
+| ng133.json | NG133 | Hypertension in pregnancy |
+| ng136.json | NG136 | Hypertension in adults |
+| ng184.json | NG184 | Bite wounds |
+| ng222.json | NG222 | Depression in adults |
+| ng232.json | NG232 | Head injury |
+| ng81_chronic_glaucoma.json | NG81_GLAUCOMA | Chronic open-angle glaucoma |
+| ng81_ocular_hypertension.json | NG81_HYPERTENSION | Ocular hypertension |
 
-## Node Types
+## How Traversal Works
 
-- **condition**: Decision points (diamond shapes in flowcharts)
-- **action**: Recommendations or actions (rectangles in flowcharts)
+1. Start at the first node (usually `n1`)
+2. If condition node: evaluate using the evaluator spec and known variables
+3. Follow the matching edge (yes/no/next)
+4. If a required variable is missing: record it and stop
+5. If action node: record the recommendation text
+6. Continue until all reachable paths are exhausted
 
-## Edge Labels
-
-- **yes**: Condition is true
-- **no**: Condition is false
-- **otherwise**: Alternative pathway
-- **(empty)**: Linear progression with no branching
-
-## Usage
-
-1. Upload a NICE guideline PDF through the application interface
-2. The system will extract the IF-THEN rules and decision graph
-3. The structured output can be used for:
-   - Computational reasoning
-   - Clinical decision support systems
-   - Visualization tools
-   - Integration with other healthcare systems
-
-## Backwards Compatibility
-
-The system maintains support for the legacy guideline format with `inputs` and decision tree nodes. Existing guidelines like `nice-hypertension.ts` will continue to work with the legacy `DecisionEngine`.
-
-New NICE guidelines extracted using this system will use the simpler graph-based format optimized for flowchart representation.
+The engine returns:
+- **reached_actions** — list of action node texts (the recommendations)
+- **path** — ordered list of `(node_id, next_node_id, edge_label)` tuples
+- **missing_variables** — variables needed but not yet known

@@ -1,155 +1,43 @@
-# Quick Start Guide
+# Quick Start
 
-## Setup (First Time)
+## 1. Backend
 
-1. **Install dependencies** (if not already done):
+```bash
+# Copy env and set your OpenAI key
+cp backend/.env.example backend/.env
+# Edit backend/.env → OPENAI_API_KEY=sk-proj-...
 
-   ```bash
-   npm install
-   ```
+# Start PostgreSQL + backend
+docker-compose up --build
+```
 
-2. **Set up your OpenAI API key**:
+Backend: http://localhost:8000
+API docs: http://localhost:8000/docs
 
-   The key is already in `.env.local` according to your message. If you need to update it:
+## 2. Frontend
 
-   ```bash
-   # Create or edit .env.local
-   echo "OPENAI_API_KEY=your-key-here" > .env.local
-   ```
+```bash
+npm install
+npm run dev
+```
 
-3. **Start the development server**:
+Frontend: http://localhost:3000
 
-   ```bash
-   npm run dev
-   ```
+## 3. Try it
 
-4. **Open your browser** to [http://localhost:3000](http://localhost:3000)
+1. Open http://localhost:3000
+2. Select a patient
+3. Type: "patient has a sore throat, temperature 38.5, no cough"
+4. The system selects NICE NG84, extracts variables, traverses the decision tree, and returns a recommendation
 
-## Using the Application
+## Switching LLM Mode (Test Notebooks)
 
-### With the Built-in NICE Hypertension Guideline
+The Colab test notebooks support both OpenAI API and a local model:
 
-1. **Select the guideline**: Click on "Hypertension in adults: diagnosis and management"
+```python
+# In the notebook configuration cell:
+USE_API = True   # OpenAI API (gpt-4o) — works anywhere
+USE_API = False  # Local gpt-oss-20b — requires A100 GPU on Colab
+```
 
-2. **Fill in patient data**:
-
-   - Clinic Systolic BP (e.g., 145)
-   - Clinic Diastolic BP (e.g., 92)
-   - Age (e.g., 65)
-   - Target-organ damage: Yes/No
-   - Emergency signs: Yes/No
-
-3. **View the decision**: The recommendation appears automatically
-
-4. **Chat with the assistant**:
-   - Toggle between "Strict Guideline" and "Explain" modes
-   - Ask questions like:
-     - "Why was this recommendation made?"
-     - "What is target-organ damage?"
-     - "What are the emergency signs I should look for?"
-     - "Can you explain the decision path?"
-
-### Uploading Your Own Guideline
-
-#### Upload JSON (Instant)
-
-1. **Click "Upload Guideline"** button
-2. **Select a JSON file** that follows the schema (see `public/sample-guideline.json`)
-3. The guideline will appear as a new chip and be automatically selected
-
-#### Upload PDF (AI-Powered Conversion)
-
-1. **Click "Upload Guideline"** button
-2. **Select a PDF file** containing your clinical guideline
-3. Wait while the system processes your PDF:
-   - Extracts pages as images
-   - Uses GPT-4 Vision to analyze flowcharts and decision logic
-   - Converts to structured JSON format
-4. The guideline will be ready to use
-
-**Best for PDF uploads**:
-
-- Guidelines with flowcharts or decision trees
-- NICE guidelines, clinical pathways
-- Visual decision algorithms
-- Multi-page documents supported
-
-## Example Scenarios
-
-### Scenario 1: Normal Blood Pressure
-
-- Systolic: 120
-- Diastolic: 80
-- Age: 50
-- Target-organ damage: No
-- Emergency signs: No
-- **Result**: Normal BP — recheck in 5 years
-
-### Scenario 2: Stage 1 Hypertension with Organ Damage
-
-- Systolic: 145
-- Diastolic: 92
-- Age: 65
-- Target-organ damage: Yes
-- Emergency signs: No
-- **Result**: Start drug treatment
-
-### Scenario 3: Severe Hypertension
-
-- Systolic: 185
-- Diastolic: 115
-- Age: 70
-- Target-organ damage: No
-- Emergency signs: Yes
-- **Result**: Same-day specialist referral (URGENT)
-
-## Chat Mode Differences
-
-### Strict Guideline Mode
-
-- Rule-based responses only
-- Strictly follows the decision tree
-- Focuses on the exact guideline recommendation
-- Best for: Quick clinical decisions
-
-### Explain Mode
-
-- AI-enhanced explanations
-- Educational context and examples
-- More detailed rationales
-- Best for: Learning and understanding
-
-## Tips
-
-- 🔴 **Urgent warnings** appear in red when immediate action is required
-- 📋 All decisions show the **decision path** taken through the tree
-- 📚 Click the citation link to view the full NICE guideline
-- 💡 The AI knows the current decision and patient data, so you can ask contextual questions
-
-## Troubleshooting
-
-### "Error: OpenAI API error"
-
-- Check that your API key is set in `.env.local`
-- Verify the key is valid
-- Restart the dev server after changing `.env.local`
-
-### Guideline upload fails
-
-- Ensure the JSON is valid (use a JSON validator)
-- Check that all required fields are present
-- See `public/sample-guideline.json` for the correct format
-
-### Build errors
-
-- Run `npm install` to ensure all dependencies are installed
-- Clear `.next` folder: `rm -rf .next`
-- Rebuild: `npm run build`
-
-## Creating Custom Guidelines
-
-See the full documentation in `README.md` for the complete JSON schema and instructions on creating your own clinical guidelines.
-
-## Safety Notice
-
-⚠️ This tool is for healthcare professionals only and should not replace clinical judgment. Always consider individual patient context, contraindications, and local protocols.
+The backend always uses the OpenAI API (configured via `backend/.env`).

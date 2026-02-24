@@ -1,61 +1,155 @@
-GuideCare backend (FastAPI)
-===========================
+# GuideCare Backend
 
-Overview
-- FastAPI backend providing:
-  - PostgreSQL storage for patients + conversations
-  - REST endpoints:
-    - GET /patients
-    - GET /patients/{id}
-    - GET /patients/{id}/context
-    - POST /patients
-    - POST /conversations
-    - GET /conversations/{id}
-  - WebSocket endpoint: /ws/chat/{patient_id} for real-time chat
-  - LangGraph integration placeholder (async HTTP call)
+FastAPI backend with LangGraph orchestration, NICE guideline graph traversal engine, and real-time WebSocket chat.
 
-Quick start (using docker-compose)
-1. Copy `.env.example` to `.env` and update values (or set env vars).
-2. From repo root run:
-   docker-compose up --build
-3. Backend will be available at http://localhost:8000
-   - OpenDocs: http://localhost:8000/docs
+## Stack
 
-Environment
-- DATABASE_URL: SQLAlchemy async connection string, e.g. `postgresql+asyncpg://user:pass@postgres:5432/db`
-- LANGGRAPH_API_URL: Base URL for LangGraph (optional)
-- LANGGRAPH_API_KEY: API key for LangGraph (optional)
-- LANGGRAPH_WORKFLOW_ID: workflow ID to call (optional)
+- **FastAPI** — async REST + WebSocket
+- **PostgreSQL** — patient and conversation storage (SQLAlchemy + asyncpg)
+- **LangGraph** — state machine orchestration for the clinical pipeline
+- **OpenAI API** — variable extraction, clarification questions, guideline selection fallback
+- **Guideline Engine** — pure-Python BFS traversal of NICE decision trees (no LLM needed)
 
-Notes
-- On startup the server will create tables and seed sample patients if DB empty.
-- The WebSocket endpoint expects JSON messages: {"role":"user","content":"...","meta":{...}}
-- To integrate with LangGraph, set LANGGRAPH_API_URL, LANGGRAPH_API_KEY and LANGGRAPH_WORKFLOW_ID.
+## Setup
 
-Testing
-- Install dev dependencies:
-  ```bash
-  pip install -r backend/requirements-dev.txt
-  ```
+### With Docker (recommended)
 
-- Option A — use an existing Postgres (set `TEST_DATABASE_URL`):
-  ```bash
-  export TEST_DATABASE_URL="postgresql+asyncpg://test:test@localhost:5432/guidecare_test"
-  # On PowerShell (Windows):
-  # $env:TEST_DATABASE_URL = "postgresql+asyncpg://test:test@localhost:5432/guidecare_test"
-  TEST_DATABASE_URL="$TEST_DATABASE_URL" python backend/scripts/init_db.py
-  pytest -q backend/tests
-  ```
+```bash
+# From the repo root
+cp backend/.env.example backend/.env
+# Edit backend/.env — set OPENAI_API_KEY
 
-- Option B — use Testcontainers (no local DB required):
-  ```bash
-  pip install testcontainers
-  pytest -q backend/tests
-  ```
-  Tests will automatically start a temporary Postgres container (requires Docker engine accessible to your user).
+docker-compose up --build
+```
 
-Next steps & improvements
-- Add migrations (alembic) for production
-- Use proper auth & CORS policies
-- Add persistent background queue for LangGraph retry / error handling
-- Add tests and CI
+Backend runs on http://localhost:8000. API docs at http://localhost:8000/docs.
+
+### Without Docker
+
+```bash
+cd backend
+
+# Create virtualenv
+python -m venv .venv && source .venv/bin/activate
+
+# Install deps
+pip install -r requirements.txt
+
+# Set environment
+cp .env.example .env
+# Edit .env — set DATABASE_URL pointing to your PostgreSQL, set OPENAI_API_KEY
+
+# Run
+uvicorn src.app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Requires a running PostgreSQL instance.
+
+## Pipeline
+
+The LangGraph state machine runs this flow for each user message:
+
+```
+load_patient → triage → clarify → select_guideline → extract_variables → walk_graph → format_output
+```
+
+1. **load_patient** — fetch patient record from DB
+2. **triage** — keyword heuristics (or external API) to assess urgency
+3. **clarify** — if variables are missing, LLM generates targeted clarification questions
+4. **select_guideline** — keyword mapping to one of 10 NICE guidelines, LLM fallback
+5. **extract_variables** — LLM extracts clinical variables from conversation + regex post-processing
+6. **walk_graph** — BFS traversal of the guideline decision tree using extracted variables
+7. **format_output** — template-based recommendation from action nodes, LLM fallback
+
+## Guideline Engine
+
+The core of the system. Located in `src/app/guideline_engine.py`.
+
+Loads 10 NICE guideline JSON files from `data/guidelines/` and their evaluators from `data/evaluators/`. Traverses condition/action node graphs by evaluating:
+- Simple variable checks (boolean, string equality)
+- Numeric comparisons (age, temperature, IOP)
+- Blood pressure ranges (systolic/diastolic)
+- Compound conditions (AND/OR)
+- Treatment type matching
+
+Returns: reached action nodes, full decision path, and any missing variables.
+
+## API Reference
+
+### REST
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /patients | List patients |
+| GET | /patients/{id} | Patient details |
+| GET | /patients/{id}/context | Patient context for LLM |
+| POST | /patients | Create patient |
+| POST | /conversations | Start conversation |
+| GET | /conversations/{id} | Conversation history |
+
+### WebSocket
+
+`/ws/chat/{patient_id}` — send/receive JSON messages:
+
+```json
+{"role": "user", "content": "patient has a sore throat, 38.5C fever", "meta": {}}
+```
+
+Response events stream back as the pipeline progresses (triage, clarification, recommendation).
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| DATABASE_URL | Yes | — | `postgresql+asyncpg://user:pass@host:5432/db` |
+| OPENAI_API_KEY | Yes | — | OpenAI API key |
+| OPENAI_MODEL | No | gpt-4o | Model for LLM calls |
+| CORS_ORIGINS | No | * | Allowed origins (comma-separated) |
+| LANGGRAPH_API_URL | No | — | External LangGraph endpoint |
+| LANGGRAPH_API_KEY | No | — | External LangGraph key |
+| LANGGRAPH_WORKFLOW_ID | No | — | External workflow ID |
+
+## Testing
+
+```bash
+# Install dev deps
+pip install -r requirements-dev.txt
+
+# Option A: existing PostgreSQL
+export TEST_DATABASE_URL="postgresql+asyncpg://test:test@localhost:5432/guidecare_test"
+pytest -q tests
+
+# Option B: Testcontainers (requires Docker)
+pip install testcontainers
+pytest -q tests
+```
+
+## File Structure
+
+```
+backend/
+├── data/
+│   ├── guidelines/         # 10 NICE guideline decision tree JSONs
+│   └── evaluators/         # 10 evaluator logic JSONs
+├── src/app/
+│   ├── main.py             # FastAPI app entry point
+│   ├── core/config.py      # Pydantic settings
+│   ├── db/
+│   │   ├── models.py       # Patient, Conversation, Message models
+│   │   └── session.py      # Async session factory
+│   ├── guideline_engine.py # Graph traversal + extraction helpers (837 lines)
+│   ├── llm.py              # Async OpenAI wrapper
+│   ├── orchestration/
+│   │   ├── graph.py        # LangGraph StateGraph definition
+│   │   ├── nodes.py        # Node functions wired to deps
+│   │   ├── state.py        # ConversationState TypedDict
+│   │   ├── deps.py         # Real implementations of all pipeline steps
+│   │   └── runner.py       # process_user_turn() entry point
+│   ├── routes/
+│   │   ├── patients.py
+│   │   └── conversations.py
+│   └── ws_manager.py       # WebSocket ConnectionManager
+├── Dockerfile
+├── requirements.txt
+└── .env.example
+```
