@@ -36,6 +36,7 @@ function isNICEGuideline(guideline: AnyGuideline): guideline is NICEGuideline {
 
 interface ChatPanelProps {
     guideline: AnyGuideline | null;
+    allGuidelines?: AnyGuideline[];
     mode: "strict" | "explain";
     onModeChange: (mode: "strict" | "explain") => void;
     selectedPatient?: PatientRecord | null;
@@ -131,7 +132,7 @@ function PathwayViewer({ pathway, guidelineId, guideline }: { pathway: string[];
     );
 }
 
-export default function ChatPanel({ guideline, mode, selectedPatient }: ChatPanelProps) {
+export default function ChatPanel({ guideline, allGuidelines, mode, selectedPatient }: ChatPanelProps) {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [input, setInput] = useState("");
     const [isLoading, setIsLoading] = useState(false);
@@ -579,7 +580,13 @@ export default function ChatPanel({ guideline, mode, selectedPatient }: ChatPane
                                                     <PathwayViewer
                                                         pathway={message.pathwayWalked}
                                                         guidelineId={message.selectedGuideline}
-                                                        guideline={guideline}
+                                                        guideline={
+                                                            allGuidelines?.find(g => {
+                                                                const gid = g.guideline_id.toLowerCase();
+                                                                const sel = (message.selectedGuideline || '').toLowerCase();
+                                                                return gid === sel || gid.includes(sel) || sel.includes(gid);
+                                                            }) || guideline
+                                                        }
                                                     />
                                                 )}
                                                 {/* Fallback direct-mode path viewer */}

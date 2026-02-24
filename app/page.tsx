@@ -506,6 +506,7 @@ export default function Home() {
                         <ChatPanel
                             key={sessionKey}
                             guideline={activeGuideline}
+                            allGuidelines={guidelines}
                             mode={mode}
                             onModeChange={setMode}
                             selectedPatient={selectedPatient}

@@ -921,7 +921,8 @@ def format_recommendation_template(
     No LLM call needed — formats directly from action node text.
     Handles treatment ladders by recommending only the first applicable step.
     """
-    # Deduplicate actions preserving order
+    # Deduplicate actions preserving order + remove actions whose text
+    # is fully contained within another (longer) action
     seen: set = set()
     unique_actions = []
     for a in actions:
@@ -929,6 +930,19 @@ def format_recommendation_template(
         if a_lower not in seen:
             seen.add(a_lower)
             unique_actions.append(a.strip())
+
+    # Remove substring-contained actions (keep the longer version)
+    filtered = []
+    for i, a in enumerate(unique_actions):
+        a_lower = a.lower()
+        is_subset = False
+        for j, b in enumerate(unique_actions):
+            if i != j and a_lower in b.lower() and len(a) < len(b):
+                is_subset = True
+                break
+        if not is_subset:
+            filtered.append(a)
+    unique_actions = filtered if filtered else unique_actions
 
     # Separate immediate actions from treatment-ladder steps
     immediate, steps = _split_treatment_steps(unique_actions)
