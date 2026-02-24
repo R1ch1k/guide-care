@@ -32,6 +32,8 @@ class ConversationState(TypedDict, total=False):
     current_node: str
     pathway_walked: List[str]
     terminal: bool
+    reached_actions: List[str]
+    missing_variables: List[str]
 
     # output
     final_recommendation: str
