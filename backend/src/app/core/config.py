@@ -1,10 +1,18 @@
+from pathlib import Path
 from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# backend/.env (two levels up from backend/src/app/core/config.py)
+_ENV_FILE = Path(__file__).resolve().parent.parent.parent.parent / ".env"
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
+    model_config = SettingsConfigDict(
+        env_file=str(_ENV_FILE) if _ENV_FILE.exists() else ".env",
+        case_sensitive=True,
+        extra="ignore",
+    )
 
     DATABASE_URL: str
 
