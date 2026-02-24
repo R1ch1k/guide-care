@@ -369,7 +369,7 @@ export default function ChatPanel({ guideline, allGuidelines, mode, selectedPati
             if (error instanceof Error && error.name === "AbortError") return;
             setMessages([{
                 role: "assistant",
-                content: `Hello! I'm your clinical decision support assistant for **${guideline.name}**. How can I help you today?`,
+                content: `Hello! I'm your clinical decision support assistant${guideline?.name ? ` for **${guideline.name}**` : ""}. How can I help you today?`,
             }]);
             setStreamingMessage("");
         } finally {
@@ -527,7 +527,7 @@ export default function ChatPanel({ guideline, allGuidelines, mode, selectedPati
                                 Initializing Clinical Assistant
                             </p>
                             <p className="text-xs text-gray-600">
-                                Loading {guideline.name}...
+                                Loading {guideline?.name || "Clinical Assistant"}...
                             </p>
                         </div>
                     ) : (
