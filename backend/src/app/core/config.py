@@ -8,13 +8,19 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str
 
-    # OpenAI API (used for variable extraction, clarification, etc.)
+    # LLM mode: "api" for OpenAI API, "local" for gpt-oss-20b via local server
+    LLM_MODE: str = "api"
+
+    # OpenAI API (used when LLM_MODE=api)
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_MODEL: str = "gpt-4o"
 
+    # Local model (used when LLM_MODE=local)
+    LOCAL_MODEL_URL: str = "http://localhost:8080/v1"
+    LOCAL_MODEL_NAME: str = "gpt-oss-20b"
+
     # Optional external services
     TRIAGE_API_URL: Optional[str] = None
-    LOCAL_20B_API_URL: Optional[str] = None
 
     # Legacy remote LangGraph placeholder (can remain unused)
     LANGGRAPH_API_URL: Optional[str] = None

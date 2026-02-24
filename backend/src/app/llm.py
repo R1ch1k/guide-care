@@ -1,7 +1,10 @@
 """
-LLM wrapper for OpenAI API calls.
+LLM wrapper — routes to OpenAI API or a local gpt-oss-20b server.
 
-Uses OPENAI_API_KEY and OPENAI_MODEL from environment / config.
+Toggle via LLM_MODE in .env:
+  LLM_MODE=api    → OpenAI API  (requires OPENAI_API_KEY)
+  LLM_MODE=local  → local model (requires LOCAL_MODEL_URL running)
+
 All LLM interactions go through the `generate()` function.
 """
 
@@ -19,27 +22,28 @@ async def generate(
     temperature: float = 0.0,
     system_message: Optional[str] = None,
 ) -> str:
-    """Call OpenAI API to generate a response.
+    """Generate a response using the configured LLM backend.
 
-    Args:
-        prompt: The user prompt to send.
-        max_tokens: Maximum tokens in the response.
-        temperature: Sampling temperature (0.0 = deterministic).
-        system_message: Optional system message prepended to the conversation.
-
-    Returns:
-        The generated text response.
-
-    Raises:
-        ValueError: If OPENAI_API_KEY is not configured.
-        Exception: If the API call fails.
+    Routes to OpenAI API or a local OpenAI-compatible server
+    based on the LLM_MODE setting.
     """
+    if settings.LLM_MODE == "local":
+        return await _generate_local(prompt, max_tokens, temperature, system_message)
+    return await _generate_api(prompt, max_tokens, temperature, system_message)
+
+
+async def _generate_api(
+    prompt: str,
+    max_tokens: int,
+    temperature: float,
+    system_message: Optional[str],
+) -> str:
+    """Call OpenAI API."""
     if not settings.OPENAI_API_KEY:
         raise ValueError(
             "OPENAI_API_KEY not configured. Set it in .env or environment."
         )
 
-    # Lazy import to avoid import errors if openai is not installed
     from openai import AsyncOpenAI
 
     client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
@@ -50,11 +54,10 @@ async def generate(
     messages.append({"role": "user", "content": prompt})
 
     logger.debug(
-        "LLM call: model=%s, max_tokens=%d, temp=%.1f, prompt_len=%d",
+        "LLM call (API): model=%s, max_tokens=%d, temp=%.1f",
         settings.OPENAI_MODEL,
         max_tokens,
         temperature,
-        len(prompt),
     )
 
     response = await client.chat.completions.create(
@@ -65,5 +68,48 @@ async def generate(
     )
 
     result = response.choices[0].message.content or ""
-    logger.debug("LLM response: %d chars", len(result))
+    logger.debug("LLM response (API): %d chars", len(result))
+    return result
+
+
+async def _generate_local(
+    prompt: str,
+    max_tokens: int,
+    temperature: float,
+    system_message: Optional[str],
+) -> str:
+    """Call a local OpenAI-compatible server (e.g. vLLM, text-generation-inference).
+
+    The local server must expose a /v1/chat/completions endpoint.
+    Set LOCAL_MODEL_URL and LOCAL_MODEL_NAME in .env.
+    """
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(
+        base_url=settings.LOCAL_MODEL_URL,
+        api_key="not-needed",
+    )
+
+    messages = []
+    if system_message:
+        messages.append({"role": "system", "content": system_message})
+    messages.append({"role": "user", "content": prompt})
+
+    logger.debug(
+        "LLM call (local): model=%s, url=%s, max_tokens=%d, temp=%.1f",
+        settings.LOCAL_MODEL_NAME,
+        settings.LOCAL_MODEL_URL,
+        max_tokens,
+        temperature,
+    )
+
+    response = await client.chat.completions.create(
+        model=settings.LOCAL_MODEL_NAME,
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+
+    result = response.choices[0].message.content or ""
+    logger.debug("LLM response (local): %d chars", len(result))
     return result

@@ -18,8 +18,11 @@ services:
       dockerfile: Dockerfile
     environment:
       - DATABASE_URL=postgresql+asyncpg://guidecare:guidecare@postgres:5432/guidecare
+      - LLM_MODE=${LLM_MODE:-api}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+      - LOCAL_MODEL_URL=${LOCAL_MODEL_URL:-http://host.docker.internal:8080/v1}
+      - LOCAL_MODEL_NAME=${LOCAL_MODEL_NAME:-gpt-oss-20b}
       - LANGGRAPH_API_URL=
       - LANGGRAPH_API_KEY=
       - LANGGRAPH_WORKFLOW_ID=
