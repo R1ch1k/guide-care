@@ -11,3 +11,5 @@ typing_extensions
 psycopg2-binary
 langgraph>=0.2.0
 openai>=1.0.0
+python-multipart
+openpyxl

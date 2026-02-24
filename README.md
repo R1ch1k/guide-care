@@ -13,13 +13,13 @@ Frontend (Next.js)  <--WebSocket-->  Backend (FastAPI + LangGraph)
                                     LLM (OpenAI API or local gpt-oss-20b)
 ```
 
-**Frontend** — Next.js chat UI with WebSocket real-time messaging, patient selector, and guideline-based recommendations display.
+**Frontend** — Next.js chat UI with WebSocket real-time messaging, patient selector, data import modal, and guideline-based recommendations display.
 
 **Backend** — FastAPI with async PostgreSQL (SQLAlchemy + asyncpg), LangGraph state machine orchestration, and WebSocket endpoint for per-patient conversations.
 
 **Guideline Engine** — Pure-Python BFS traversal of NICE guideline decision trees. Evaluates condition nodes (numeric comparisons, BP ranges, AND/OR logic) and returns reached action nodes with the full decision path.
 
-**LLM Layer** — Used for variable extraction from conversation, clarification question generation, and guideline selection fallback. Supports two modes (see below).
+**LLM Layer** — Used for triage (urgency + guideline selection), variable extraction from conversation, and clarification question generation. Supports OpenAI API or a local model.
 
 ## NICE Guidelines Covered
 
@@ -40,11 +40,23 @@ Each guideline is stored as two JSON files:
 - `backend/data/guidelines/<id>.json` — decision tree (condition/action nodes + edges)
 - `backend/data/evaluators/<id>_eval.json` — condition evaluation logic per node
 
+## Pipeline Flow
+
+Each user message goes through a LangGraph state machine:
+
+1. **Load Patient** — fetch patient record from the database
+2. **Triage** — LLM determines urgency (green/amber/red) and selects the best-matching NICE guideline
+3. **Select Guideline** — load the guideline JSON decision tree
+4. **Clarify** — if required clinical variables are missing, generate a clarification question
+5. **Extract Variables** — LLM extracts structured clinical variables from the conversation
+6. **Walk Graph** — BFS traversal of the guideline decision tree using extracted variables
+7. **Format Recommendation** — produce a structured recommendation with the decision pathway
+
+On completion, a `Diagnosis` record is automatically persisted to the database.
+
 ## LLM Modes: API vs Local Model
 
-The system supports two LLM backends. Choose based on your use case:
-
-### OpenAI API (default for backend, recommended for demos)
+### OpenAI API (default, recommended for demos)
 
 Uses `gpt-4o` via the OpenAI API. Set your key in the backend `.env`:
 
@@ -64,10 +76,6 @@ To switch the test notebook to local model:
 1. Open the notebook on Google Colab with an A100 runtime
 2. In the configuration cell, set `USE_API = False`
 3. The notebook will download and load the model in BF16
-
-To switch back to API mode:
-1. Set `USE_API = True`
-2. Set your API key in the `API_KEY` variable (or use Colab secrets)
 
 The backend currently uses the OpenAI API only. To use a local model in the backend, you would replace `app/llm.py` with a local inference wrapper.
 
@@ -107,6 +115,14 @@ This starts:
 
 On first startup, the backend creates tables and seeds sample patients.
 
+**Running without Docker** (development):
+
+```bash
+cd backend
+pip install -r requirements.txt
+PYTHONPATH=src uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
 ### 3. Start the frontend
 
 ```bash
@@ -118,15 +134,36 @@ Open http://localhost:3000 in your browser.
 
 ### 4. Use the application
 
-1. Select a patient from the sidebar
+1. Select a patient from the sidebar (or import your own via the **Connect** button)
 2. Describe symptoms in the chat (e.g. "patient has a sore throat, 38.5C fever, no cough")
 3. The system will:
-   - Triage the symptoms for urgency
+   - Triage the symptoms for urgency (green/amber/red)
    - Select the appropriate NICE guideline
    - Extract clinical variables from the conversation
    - Ask clarification questions if variables are missing
    - Traverse the guideline decision tree
    - Return the evidence-based recommendation with the decision path
+4. Completed diagnoses are automatically saved and can be exported via the API
+
+## Importing Patient Data
+
+Click the **Connect** button in the patient info panel to open the data import modal.
+
+### CSV Upload
+
+Upload a `.csv` file with the following columns:
+
+| nhs_number | first_name | last_name | date_of_birth | gender | conditions | medications | allergies |
+|------------|------------|-----------|---------------|--------|------------|-------------|-----------|
+| 123-456-7890 | Jane | Smith | 1985-03-15 | Female | Asthma, Anxiety | Salbutamol | Penicillin |
+
+- `conditions` and `allergies` can be comma-separated strings or JSON arrays
+- `medications` can be a JSON array of `{"name": "...", "dose": "..."}` objects or comma-separated names
+- A sample CSV template is available for download in the modal
+
+### Excel Upload
+
+Upload a `.xlsx` file with the same column headers in the first row.
 
 ## Backend API
 
@@ -134,12 +171,16 @@ Open http://localhost:3000 in your browser.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | /patients | List all patients |
-| GET | /patients/{id} | Get patient details |
-| GET | /patients/{id}/context | Get patient context for LLM |
-| POST | /patients | Create a patient |
-| POST | /conversations | Start a new conversation |
-| GET | /conversations/{id} | Get conversation history |
+| GET | `/patients` | List all patients |
+| GET | `/patients/{id}` | Get patient details |
+| GET | `/patients/{id}/context` | Get patient context for LLM |
+| POST | `/patients` | Create a patient |
+| POST | `/patients/import` | Import patients from CSV/Excel file |
+| POST | `/conversations` | Start a new conversation |
+| GET | `/conversations/{id}` | Get conversation history |
+| GET | `/diagnoses` | List all completed diagnoses |
+| GET | `/diagnoses/{id}` | Get a single diagnosis |
+| GET | `/diagnoses/export?format=json\|csv` | Export all diagnoses |
 
 ### WebSocket
 
@@ -149,30 +190,50 @@ Connect to `/ws/chat/{patient_id}` for real-time chat. Send JSON:
 {"role": "user", "content": "patient has a sore throat", "meta": {}}
 ```
 
+The server streams events back including triage results, clarification questions, and final recommendations.
+
 ## Project Structure
 
 ```
 guide-care/
 ├── app/                        # Next.js frontend pages
-├── components/                 # React components (ChatPanel, DecisionCard, etc.)
+├── components/
+│   ├── ChatPanel.tsx           # Main chat interface with WebSocket
+│   ├── PatientInfoPanel.tsx    # Patient details sidebar
+│   ├── ConnectDataModal.tsx    # Data import modal (CSV/Excel upload)
+│   ├── SampleInputModal.tsx    # Sample inputs with multi-guideline examples
+│   ├── DecisionCard.tsx        # Decision pathway visualization
+│   ├── AddPatientModal.tsx     # Manual patient creation form
+│   └── ui/                     # Shared UI components (shadcn)
 ├── lib/                        # Frontend utilities and types
 ├── backend/
 │   ├── data/
 │   │   ├── guidelines/         # 10 NICE guideline JSON decision trees
 │   │   └── evaluators/         # 10 evaluator JSON files
-│   ├── src/app/
-│   │   ├── core/config.py      # Settings (DB, OpenAI, CORS)
-│   │   ├── db/                 # SQLAlchemy models and session
-│   │   ├── guideline_engine.py # Graph traversal + variable extraction helpers
-│   │   ├── llm.py              # Async OpenAI wrapper
-│   │   ├── orchestration/
-│   │   │   ├── graph.py        # LangGraph state machine definition
-│   │   │   ├── nodes.py        # LangGraph node functions
-│   │   │   ├── state.py        # ConversationState TypedDict
-│   │   │   ├── deps.py         # Real implementations (triage, clarify, extract, traverse, format)
-│   │   │   └── runner.py       # process_user_turn() entry point
-│   │   ├── routes/             # FastAPI route handlers
-│   │   └── ws_manager.py       # WebSocket connection manager
+│   ├── src/
+│   │   ├── main.py             # FastAPI app entry point
+│   │   └── app/
+│   │       ├── core/config.py  # Settings (DB, OpenAI, CORS)
+│   │       ├── db/
+│   │       │   ├── models.py   # Patient, Conversation, Diagnosis models
+│   │       │   └── session.py  # Async SQLAlchemy session
+│   │       ├── api/
+│   │       │   ├── patients.py     # Patient CRUD + CSV/Excel import
+│   │       │   ├── conversations.py # Conversation endpoints
+│   │       │   └── diagnoses.py    # Diagnosis list, detail, export
+│   │       ├── guideline_engine.py  # Graph traversal + recommendation formatting
+│   │       ├── llm.py              # Async OpenAI wrapper
+│   │       ├── orchestration/
+│   │       │   ├── graph.py    # LangGraph state machine definition
+│   │       │   ├── nodes.py    # LangGraph node functions
+│   │       │   ├── state.py    # ConversationState TypedDict
+│   │       │   ├── deps.py     # Triage, clarify, extract, traverse, format
+│   │       │   └── runner.py   # process_user_turn() entry point
+│   │       ├── schemas.py      # Pydantic request/response models
+│   │       ├── crud.py         # Database CRUD operations
+│   │       ├── seed.py         # Sample patient data seeder
+│   │       └── ws_manager.py   # WebSocket manager + diagnosis auto-persist
+│   ├── tests/                  # Backend test suite
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   └── .env.example
@@ -201,14 +262,12 @@ Latest API results: 10/10 pipeline success, 85% extraction accuracy, 96.2% overa
 | OPENAI_API_KEY | Yes | — | OpenAI API key for LLM features |
 | OPENAI_MODEL | No | gpt-4o | OpenAI model to use |
 | CORS_ORIGINS | No | * | Comma-separated allowed origins |
-| LANGGRAPH_API_URL | No | — | External LangGraph service (optional) |
-| LANGGRAPH_API_KEY | No | — | LangGraph API key (optional) |
 
-### Frontend (`env.local`)
+### Frontend (`.env.local`)
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| OPENAI_API_KEY | Yes | OpenAI key for frontend chat features |
+| NEXT_PUBLIC_BACKEND_URL | No | Backend URL (defaults to http://localhost:8000) |
 
 ## Safety Notice
 
