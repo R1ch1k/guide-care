@@ -1000,7 +1000,8 @@ def format_recommendation_template(
             parts.append(f"If target BP is not achieved, subsequent steps include "
                          f"{', then '.join(s for s in steps[1:])}")
 
-    actions_text = ". ".join(parts)
+    # Strip trailing periods from each part before joining to avoid ".."
+    actions_text = ". ".join(p.rstrip(".") for p in parts)
     recommendation = f"Based on NICE {guideline_id}, {actions_text}"
 
     # Append patient context
