@@ -33,6 +33,7 @@ export default function Home() {
     const [isAddPatientOpen, setIsAddPatientOpen] = useState(false);
     const [isSampleInputOpen, setIsSampleInputOpen] = useState(false);
     const [viewerGuideline, setViewerGuideline] = useState<NICEGuideline | null>(null);
+    const [selectedPatient, setSelectedPatient] = useState<PatientRecord | null>(null);
 
     // Load default guideline on mount
     useEffect(() => {
@@ -473,12 +474,18 @@ export default function Home() {
                             guideline={activeGuideline}
                             mode={mode}
                             onModeChange={setMode}
+                            selectedPatient={selectedPatient}
                         />
                     }
                     rightPanel={
                         <PatientInfoPanel
                             records={patientRecords}
                             onAddPatient={() => setIsAddPatientOpen(true)}
+                            selectedPatientId={selectedPatient?.id}
+                            onSelectPatient={(patient) => {
+                                setSelectedPatient(patient);
+                                setSessionKey((prev) => prev + 1);
+                            }}
                             className="bg-white h-full w-full"
                         />
                     }

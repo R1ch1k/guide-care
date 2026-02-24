@@ -25,6 +25,8 @@ export interface PatientRecord {
 interface PatientInfoPanelProps {
   records: PatientRecord[];
   onAddPatient: () => void;
+  selectedPatientId?: string | null;
+  onSelectPatient?: (patient: PatientRecord) => void;
   className?: string;
 }
 
@@ -42,6 +44,8 @@ const statusStyles: Record<PatientStatus, string> = {
 export default function PatientInfoPanel({
   records,
   onAddPatient,
+  selectedPatientId,
+  onSelectPatient,
   className,
 }: PatientInfoPanelProps) {
   return (
@@ -105,9 +109,22 @@ export default function PatientInfoPanel({
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {records.map((record) => (
-                    <tr key={record.id} className="hover:bg-blue-50/70 transition-colors">
+                    <tr
+                      key={record.id}
+                      onClick={() => onSelectPatient?.(record)}
+                      className={clsx(
+                        "transition-colors",
+                        onSelectPatient && "cursor-pointer",
+                        selectedPatientId === record.id
+                          ? "bg-blue-100 border-l-4 border-l-blue-500"
+                          : "hover:bg-blue-50/70"
+                      )}
+                    >
                       <td className="px-3 py-3 align-top">
-                        <p className="text-xs font-semibold text-gray-900 break-words">
+                        <p className={clsx(
+                          "text-xs font-semibold break-words",
+                          selectedPatientId === record.id ? "text-blue-900" : "text-gray-900"
+                        )}>
                           {record.name}
                         </p>
                         <p className="text-[11px] text-gray-500 mt-0.5 break-words">

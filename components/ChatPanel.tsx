@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { ChatMessage, AnyGuideline, NICEGuideline } from "@/lib/types";
+import { PatientRecord } from "@/components/PatientInfoPanel";
 import {
     Conversation,
     ConversationContent,
@@ -34,9 +35,10 @@ interface ChatPanelProps {
     guideline: AnyGuideline | null;
     mode: "strict" | "explain";
     onModeChange: (mode: "strict" | "explain") => void;
+    selectedPatient?: PatientRecord | null;
 }
 
-export default function ChatPanel({ guideline, mode }: ChatPanelProps) {
+export default function ChatPanel({ guideline, mode, selectedPatient }: ChatPanelProps) {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [input, setInput] = useState("");
     const [isLoading, setIsLoading] = useState(false);
@@ -83,6 +85,15 @@ export default function ChatPanel({ guideline, mode }: ChatPanelProps) {
                     guideline,
                     decision: null,
                     mode,
+                    patientContext: selectedPatient ? {
+                        name: selectedPatient.name,
+                        age: selectedPatient.age,
+                        id: selectedPatient.id,
+                        primaryConcern: selectedPatient.primaryConcern,
+                        status: selectedPatient.status,
+                        clinician: selectedPatient.clinician,
+                        notes: selectedPatient.notes,
+                    } : null,
                 }),
                 signal: abortController.signal,
             });
@@ -198,6 +209,15 @@ export default function ChatPanel({ guideline, mode }: ChatPanelProps) {
                     guideline,
                     decision: null,
                     mode,
+                    patientContext: selectedPatient ? {
+                        name: selectedPatient.name,
+                        age: selectedPatient.age,
+                        id: selectedPatient.id,
+                        primaryConcern: selectedPatient.primaryConcern,
+                        status: selectedPatient.status,
+                        clinician: selectedPatient.clinician,
+                        notes: selectedPatient.notes,
+                    } : null,
                 }),
                 signal: abortControllerRef.current.signal,
             });
@@ -415,7 +435,10 @@ export default function ChatPanel({ guideline, mode }: ChatPanelProps) {
                                     value={input}
                                     onChange={(e) => setInput(e.target.value)}
                                     disabled={!guideline || isLoading}
-                                    placeholder="Describe your patient's situation or ask a question..."
+                                    placeholder={selectedPatient
+                                        ? `Chatting about ${selectedPatient.name} (${selectedPatient.age}yo, ${selectedPatient.primaryConcern})...`
+                                        : "Describe your patient's situation or ask a question..."
+                                    }
                                 />
                                 <PromptInputToolbar>
                                     <PromptInputTools>

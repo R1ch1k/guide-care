@@ -7,11 +7,22 @@ function isNICEGuideline(guideline: AnyGuideline): guideline is NICEGuideline {
     return 'rules' in guideline && 'edges' in guideline;
 }
 
+interface PatientContext {
+    name: string;
+    age: number;
+    id: string;
+    primaryConcern: string;
+    status: string;
+    clinician: string;
+    notes?: string;
+}
+
 interface ChatRequestBody {
     messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>;
     guideline: AnyGuideline;
     decision: DecisionResult | null;
     mode: 'strict' | 'explain';
+    patientContext?: PatientContext | null;
 }
 
 function getOpenAIClient() {
@@ -60,7 +71,7 @@ export async function POST(req: NextRequest) {
             );
         }
 
-        const { messages, guideline, decision, mode } = body;
+        const { messages, guideline, decision, mode, patientContext } = body;
 
         // Validate required fields
         if (!messages || !Array.isArray(messages)) {
@@ -89,8 +100,8 @@ export async function POST(req: NextRequest) {
 
         // Build system prompt based on mode
         const systemPrompt = mode === 'strict'
-            ? buildStrictPrompt(guideline, decision)
-            : buildExplainPrompt(guideline, decision);
+            ? buildStrictPrompt(guideline, decision, patientContext)
+            : buildExplainPrompt(guideline, decision, patientContext);
 
         const stream = await openai.chat.completions.create({
             model: process.env.OPENAI_MODEL || 'gpt-4o-2024-08-06',
@@ -139,7 +150,25 @@ export async function POST(req: NextRequest) {
     }
 }
 
-function buildStrictPrompt(guideline: AnyGuideline, decision: DecisionResult | null): string {
+function buildPatientSection(patient: PatientContext | null | undefined): string {
+    if (!patient) return '';
+    const parts = [
+        `\nPATIENT RECORD (from EHR):`,
+        `- Name: ${patient.name}`,
+        `- Age: ${patient.age}`,
+        `- ID: ${patient.id}`,
+        `- Primary Concern: ${patient.primaryConcern}`,
+        `- Status: ${patient.status}`,
+        `- Clinician: ${patient.clinician}`,
+    ];
+    if (patient.notes) {
+        parts.push(`- Clinical Notes: ${patient.notes}`);
+    }
+    parts.push(`\nUse this patient information when applying the guidelines. You already know the patient's age, primary concern, and clinical notes — do not ask for information that is already provided above.`);
+    return parts.join('\n');
+}
+
+function buildStrictPrompt(guideline: AnyGuideline, decision: DecisionResult | null, patientContext?: PatientContext | null): string {
     const today = new Date().toLocaleDateString('en-US', {
         weekday: 'long',
         year: 'numeric',
@@ -162,7 +191,7 @@ TODAY'S DATE: ${today}
 GUIDELINE: ${guideline.name} (${guideline.version})
 SOURCE: ${guideline.citation}
 URL: ${guideline.citation_url}
-
+${buildPatientSection(patientContext)}
 CLINICAL DECISION RULES (YOU MUST FOLLOW THESE EXACTLY):
 ${rulesList}
 
@@ -247,7 +276,7 @@ GUIDELINE INFORMATION (keep this in the background):
 - Name: ${guideline.name} (${guideline.version})
 - Source: ${guideline.citation}
 - URL: ${guideline.citation_url}
-
+${buildPatientSection(patientContext)}
 INTERNAL DECISION TREE STRUCTURE (DO NOT MENTION THESE TECHNICAL DETAILS TO THE USER):
 Required Inputs:
 ${inputsList}
@@ -290,7 +319,7 @@ CONVERSATIONAL INSTRUCTIONS:
 Remember: Be helpful, professional, and conversational. Guide the user naturally without exposing the technical decision tree mechanics. Always base your questions on the actual Required Inputs defined for THIS specific guideline.`;
 }
 
-function buildExplainPrompt(guideline: AnyGuideline, decision: DecisionResult | null): string {
+function buildExplainPrompt(guideline: AnyGuideline, decision: DecisionResult | null, patientContext?: PatientContext | null): string {
     const today = new Date().toLocaleDateString('en-US', {
         weekday: 'long',
         year: 'numeric',
@@ -319,7 +348,7 @@ GUIDELINE INFORMATION:
 - Name: ${guideline.name} (${guideline.version})
 - Source: ${guideline.citation}
 - URL: ${guideline.citation_url}
-
+${buildPatientSection(patientContext)}
 CLINICAL DECISION RULES (Follow these strictly):
 ${rulesList}
 
@@ -412,7 +441,7 @@ GUIDELINE INFORMATION (keep this in the background):
 - Name: ${guideline.name} (${guideline.version})
 - Source: ${guideline.citation}
 - URL: ${guideline.citation_url}
-
+${buildPatientSection(patientContext)}
 INTERNAL DECISION TREE STRUCTURE (DO NOT EXPOSE THESE TECHNICAL DETAILS):
 Required Inputs:
 ${inputsList}
