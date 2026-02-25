@@ -982,6 +982,8 @@ def format_recommendation_template(
     parts = []
 
     # Format immediate actions (diagnoses, treatment decisions)
+    # Strip trailing periods from each action to avoid ".." when joining
+    immediate = [a.rstrip(".") for a in immediate]
     if immediate:
         if len(immediate) == 1:
             parts.append(immediate[0])

@@ -79,7 +79,7 @@ export default function ConnectDataModal({ isOpen, onClose, onImportComplete }: 
 
     return (
         <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="max-w-2xl">
+            <DialogContent className="max-w-2xl overflow-hidden">
                 <DialogHeader>
                     <DialogTitle>Connect Data Source</DialogTitle>
                 </DialogHeader>
@@ -170,30 +170,34 @@ export default function ConnectDataModal({ isOpen, onClose, onImportComplete }: 
                             {/* Expected format */}
                             <div>
                                 <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-                                    Expected CSV Format
+                                    Expected CSV Columns
                                 </h4>
-                                <div className="overflow-x-auto border border-gray-200 rounded-lg">
-                                    <table className="min-w-full text-xs">
+                                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                                    <table className="w-full text-xs">
                                         <thead className="bg-gray-50">
                                             <tr>
-                                                {["nhs_number", "first_name", "last_name", "date_of_birth", "gender", "conditions", "medications", "allergies"].map((h) => (
-                                                    <th key={h} className="px-2 py-1.5 text-left font-semibold text-gray-600 whitespace-nowrap">
-                                                        {h}
-                                                    </th>
-                                                ))}
+                                                <th className="px-3 py-1.5 text-left font-semibold text-gray-600">Column</th>
+                                                <th className="px-3 py-1.5 text-left font-semibold text-gray-600">Required</th>
+                                                <th className="px-3 py-1.5 text-left font-semibold text-gray-600">Example</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-gray-100">
-                                            <tr>
-                                                <td className="px-2 py-1.5 text-gray-700">123-456-7890</td>
-                                                <td className="px-2 py-1.5 text-gray-700">Jane</td>
-                                                <td className="px-2 py-1.5 text-gray-700">Smith</td>
-                                                <td className="px-2 py-1.5 text-gray-700">1985-03-15</td>
-                                                <td className="px-2 py-1.5 text-gray-700">Female</td>
-                                                <td className="px-2 py-1.5 text-gray-500 font-mono">Asthma, Anxiety</td>
-                                                <td className="px-2 py-1.5 text-gray-500 font-mono">Salbutamol</td>
-                                                <td className="px-2 py-1.5 text-gray-500 font-mono">Penicillin</td>
-                                            </tr>
+                                            {[
+                                                ["nhs_number", "Yes", "123-456-7890"],
+                                                ["first_name", "Yes", "Jane"],
+                                                ["last_name", "Yes", "Smith"],
+                                                ["date_of_birth", "Yes", "1985-03-15"],
+                                                ["gender", "No", "Female"],
+                                                ["conditions", "No", "Asthma, Anxiety"],
+                                                ["medications", "No", "Salbutamol 100mcg"],
+                                                ["allergies", "No", "Penicillin"],
+                                            ].map(([col, req, ex]) => (
+                                                <tr key={col}>
+                                                    <td className="px-3 py-1 font-mono text-gray-700">{col}</td>
+                                                    <td className="px-3 py-1 text-gray-500">{req}</td>
+                                                    <td className="px-3 py-1 text-gray-400">{ex}</td>
+                                                </tr>
+                                            ))}
                                         </tbody>
                                     </table>
                                 </div>
@@ -224,8 +228,8 @@ export default function ConnectDataModal({ isOpen, onClose, onImportComplete }: 
                                 <p className="text-sm text-gray-600 mb-3">
                                     Connect directly to a SQL database containing patient records. The database should have a table matching this schema:
                                 </p>
-                                <pre className="text-xs bg-gray-900 text-green-400 p-3 rounded-md overflow-x-auto font-mono">
-                                    {SAMPLE_SQL}
+                                <pre className="text-xs bg-gray-900 text-green-400 p-3 rounded-md overflow-x-auto font-mono whitespace-pre-wrap break-words">
+{SAMPLE_SQL}
                                 </pre>
                             </div>
 
