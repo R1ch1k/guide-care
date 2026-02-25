@@ -1,6 +1,6 @@
 # GuideCare — NHS NICE Guideline Clinical Decision Support
 
-A full-stack clinical decision support system that traverses NICE (National Institute for Health and Care Excellence) guideline decision trees to provide evidence-based recommendations. Combines a real graph-traversal engine with LLM-powered variable extraction and clarification.
+A full-stack clinical decision support system that traverses NICE (National Institute for Health and Care Excellence) guideline decision trees to provide evidence-based recommendations. Combines a real graph-traversal engine with LLM-powered triage, variable extraction, and clarification.
 
 ## Architecture
 
@@ -10,7 +10,7 @@ Frontend (Next.js)  <--WebSocket-->  Backend (FastAPI + LangGraph)
                                     Guideline Engine
                                     (graph traversal)
                                          |
-                                    LLM (OpenAI API or local gpt-oss-20b)
+                                    LLM (OpenAI GPT-4o API)
 ```
 
 **Frontend** — Next.js chat UI with WebSocket real-time messaging, patient selector, data import modal, and guideline-based recommendations display.
@@ -19,7 +19,7 @@ Frontend (Next.js)  <--WebSocket-->  Backend (FastAPI + LangGraph)
 
 **Guideline Engine** — Pure-Python BFS traversal of NICE guideline decision trees. Evaluates condition nodes (numeric comparisons, BP ranges, AND/OR logic) and returns reached action nodes with the full decision path.
 
-**LLM Layer** — Used for triage (urgency + guideline selection), variable extraction from conversation, and clarification question generation. Supports OpenAI API or a local model.
+**LLM Layer** — Used for triage (urgency assessment + guideline selection), variable extraction from conversation, and clarification question generation.
 
 ## NICE Guidelines Covered
 
@@ -45,39 +45,25 @@ Each guideline is stored as two JSON files:
 Each user message goes through a LangGraph state machine:
 
 1. **Load Patient** — fetch patient record from the database
-2. **Triage** — LLM determines urgency (green/amber/red) and selects the best-matching NICE guideline
-3. **Select Guideline** — load the guideline JSON decision tree
-4. **Clarify** — if required clinical variables are missing, generate a clarification question
-5. **Extract Variables** — LLM extracts structured clinical variables from the conversation
+2. **Triage** — LLM determines urgency (emergency/urgent/moderate/routine) and selects the best-matching NICE guideline. Emergency cases skip directly to step 7 with an immediate referral message
+3. **Clarify** — if required clinical variables are missing, generate a clarification question and wait for the user's answer
+4. **Select Guideline** — load the guideline JSON decision tree
+5. **Extract Variables** — LLM extracts structured clinical variables from the conversation, with regex post-processing for edge cases
 6. **Walk Graph** — BFS traversal of the guideline decision tree using extracted variables
-7. **Format Recommendation** — produce a structured recommendation with the decision pathway
+7. **Format Recommendation** — produce a structured recommendation with the decision pathway and NICE citation
 
 On completion, a `Diagnosis` record is automatically persisted to the database.
 
-## LLM Modes: API vs Local Model
+### Urgency Triage
 
-### OpenAI API (default, recommended for demos)
+The triage step performs a structured urgency assessment with clinical red flags:
 
-Uses `gpt-4o` via the OpenAI API. Set your key in the backend `.env`:
-
-```bash
-OPENAI_API_KEY=sk-proj-your-key-here
-OPENAI_MODEL=gpt-4o
-```
-
-Pros: No GPU required, fast, high accuracy.
-Cons: Requires API key, costs per token, data leaves your machine.
-
-### Local model: gpt-oss-20b (for research / offline use)
-
-A 21B-parameter MoE model (3.6B active) that runs on a single A100 GPU. Used in the Colab test suite notebooks (`gpt_oss_20b_final_test_suite.ipynb` and `gpt_api_final_test_suite.ipynb`).
-
-To switch the test notebook to local model:
-1. Open the notebook on Google Colab with an A100 runtime
-2. In the configuration cell, set `USE_API = False`
-3. The notebook will download and load the model in BF16
-
-The backend currently uses the OpenAI API only. To use a local model in the backend, you would replace `app/llm.py` with a local inference wrapper.
+| Level | Action | Examples |
+|-------|--------|---------|
+| **Emergency** | Immediate referral, skip guideline | Airway compromise, BP >= 180/120 with symptoms, loss of consciousness, sepsis signs, suicidal ideation with plan |
+| **Urgent** | Same-day assessment, proceed with guideline | Fever > 38.5C with moderate symptoms, significant pain, acute worsening |
+| **Moderate** | 1-3 day assessment | Mild-moderate stable symptoms, low-grade fever |
+| **Routine** | Standard GP appointment | Very mild symptoms, monitoring, preventive care |
 
 ## Quick Start
 
@@ -85,14 +71,13 @@ The backend currently uses the OpenAI API only. To use a local model in the back
 
 - Docker and Docker Compose
 - Node.js 18+
-- An OpenAI API key (for the backend LLM features)
+- An OpenAI API key
 
 ### 1. Clone and configure
 
 ```bash
 git clone https://github.com/R1ch1k/guide-care.git
 cd guide-care
-git checkout sqlite-database
 ```
 
 Create the backend environment file:
@@ -103,24 +88,47 @@ cp backend/.env.example backend/.env
 
 Edit `backend/.env` and set your `OPENAI_API_KEY`.
 
-### 2. Start the backend
+### 2. Start the backend (Docker)
 
 ```bash
 docker-compose up --build
 ```
 
 This starts:
-- PostgreSQL on port 5432
-- FastAPI backend on port 8000 (API docs at http://localhost:8000/docs)
+- **PostgreSQL** on port 5432 (database: `guidecare`, user: `guidecare`, password: `guidecare`)
+- **FastAPI backend** on port 8000
 
-On first startup, the backend creates tables and seeds sample patients.
+On first startup, the backend creates all database tables and seeds sample patients.
 
-**Running without Docker** (development):
+API documentation is available at http://localhost:8000/docs.
+
+To stop:
+
+```bash
+docker-compose down          # Stop containers (keeps data)
+docker-compose down -v       # Stop and delete database volume
+```
+
+To rebuild after code changes:
+
+```bash
+docker-compose up --build    # Rebuilds the backend image
+```
+
+### 2b. Start the backend (without Docker)
+
+If you prefer running without Docker, you need a PostgreSQL instance running separately:
 
 ```bash
 cd backend
+python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-PYTHONPATH=src uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+cp .env.example .env
+# Edit .env — set DATABASE_URL to your PostgreSQL instance and OPENAI_API_KEY
+
+cd src
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ### 3. Start the frontend
@@ -137,7 +145,7 @@ Open http://localhost:3000 in your browser.
 1. Select a patient from the sidebar (or import your own via the **Connect** button)
 2. Describe symptoms in the chat (e.g. "patient has a sore throat, 38.5C fever, no cough")
 3. The system will:
-   - Triage the symptoms for urgency (green/amber/red)
+   - Triage the symptoms for urgency (emergency/urgent/moderate/routine)
    - Select the appropriate NICE guideline
    - Extract clinical variables from the conversation
    - Ask clarification questions if variables are missing
@@ -164,6 +172,61 @@ Upload a `.csv` file with the following columns:
 ### Excel Upload
 
 Upload a `.xlsx` file with the same column headers in the first row.
+
+## LLM Configuration
+
+### GPT-4o via OpenAI API (default)
+
+The backend uses the OpenAI API (`gpt-4o` by default) for all LLM operations: triage, variable extraction, clarification generation, and guideline selection fallback. Set your key in `backend/.env`:
+
+```bash
+OPENAI_API_KEY=sk-proj-your-key-here
+OPENAI_MODEL=gpt-4o          # or gpt-4o-mini for lower cost
+```
+
+The `docker-compose.yml` passes these through as environment variables:
+
+```yaml
+environment:
+  - OPENAI_API_KEY=${OPENAI_API_KEY}
+  - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+```
+
+### Using gpt-oss-20b (local model, for research / offline use)
+
+The test notebooks in `testing/` support running with a local 21B-parameter MoE model (3.6B active parameters) called gpt-oss-20b. This model runs on a single A100 GPU.
+
+**To use in the test notebooks (Google Colab):**
+
+1. Open `testing/gpt_oss_20b_final_test_suite.ipynb` on Google Colab
+2. Select an A100 GPU runtime
+3. In the configuration cell, set `USE_API = False`
+4. The notebook will download and load the model in BF16
+5. All pipeline tests (variable extraction, clarification, recommendation formatting) will run against the local model
+
+**To switch back to API mode:**
+
+1. Set `USE_API = True`
+2. Set your API key in the `API_KEY` variable (or use Colab secrets)
+
+**To use in the backend (advanced):**
+
+The `docker-compose.yml` already includes environment variables for a local model:
+
+```yaml
+environment:
+  - LLM_MODE=${LLM_MODE:-api}                    # Set to "local" for local model
+  - LOCAL_MODEL_URL=${LOCAL_MODEL_URL:-http://host.docker.internal:8080/v1}
+  - LOCAL_MODEL_NAME=${LOCAL_MODEL_NAME:-gpt-oss-20b}
+```
+
+To use a local model with the backend:
+1. Host gpt-oss-20b (or any OpenAI-compatible model) on a GPU server with an OpenAI-compatible API endpoint (e.g. vLLM, text-generation-inference)
+2. Set `LLM_MODE=local` in your `.env`
+3. Set `LOCAL_MODEL_URL` to your model's API endpoint
+4. The backend's `app/llm.py` will route requests to the local endpoint instead of OpenAI
+
+**Note:** The local model achieves comparable pipeline scores to GPT-4o on the test suite (see Test Results below), making it viable for privacy-sensitive deployments where data must not leave the network.
 
 ## Backend API
 
@@ -197,6 +260,9 @@ The server streams events back including triage results, clarification questions
 ```
 guide-care/
 ├── app/                        # Next.js frontend pages
+│   ├── page.tsx                # Main application page
+│   ├── api/chat/route.ts       # Legacy chat API route
+│   └── api/parse-pdf/route.ts  # PDF guideline parser
 ├── components/
 │   ├── ChatPanel.tsx           # Main chat interface with WebSocket
 │   ├── PatientInfoPanel.tsx    # Patient details sidebar
@@ -206,6 +272,10 @@ guide-care/
 │   ├── AddPatientModal.tsx     # Manual patient creation form
 │   └── ui/                     # Shared UI components (shadcn)
 ├── lib/                        # Frontend utilities and types
+├── testing/                    # Test notebooks (Colab)
+│   ├── gpt_api_final_test_suite.ipynb
+│   ├── gpt_oss_20b_final_test_suite.ipynb
+│   └── medical_chatbot_triage_testing.ipynb
 ├── backend/
 │   ├── data/
 │   │   ├── guidelines/         # 10 NICE guideline JSON decision trees
@@ -225,7 +295,6 @@ guide-care/
 │   │       ├── llm.py              # Async OpenAI wrapper
 │   │       ├── orchestration/
 │   │       │   ├── graph.py    # LangGraph state machine definition
-│   │       │   ├── nodes.py    # LangGraph node functions
 │   │       │   ├── state.py    # ConversationState TypedDict
 │   │       │   ├── deps.py     # Triage, clarify, extract, traverse, format
 │   │       │   └── runner.py   # process_user_turn() entry point
@@ -233,7 +302,7 @@ guide-care/
 │   │       ├── crud.py         # Database CRUD operations
 │   │       ├── seed.py         # Sample patient data seeder
 │   │       └── ws_manager.py   # WebSocket manager + diagnosis auto-persist
-│   ├── tests/                  # Backend test suite
+│   ├── tests/                  # Backend unit + E2E tests
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   └── .env.example
@@ -241,16 +310,35 @@ guide-care/
 └── package.json
 ```
 
-## Test Notebooks
+## Testing
 
-Two Colab notebooks validate the full pipeline independently of the backend:
+### Backend Tests
 
-- **gpt_oss_20b_final_test_suite.ipynb** — runs on local gpt-oss-20b model (A100 GPU)
-- **gpt_api_final_test_suite.ipynb** — runs on OpenAI API (gpt-4o)
+```bash
+cd backend
+pip install -r requirements.txt -r requirements-dev.txt
 
-Both test: variable extraction (30 cases), multi-turn clarification (10 cases), recommendation formatting (10 cases), and error handling (10 cases).
+cd src
+PYTHONPATH=. pytest -q ../tests
+```
 
-Latest API results: 10/10 pipeline success, 85% extraction accuracy, 96.2% overall score.
+The backend test suite (`backend/tests/`) includes:
+- **test_patients.py** — Patient CRUD API tests
+- **test_pipeline_e2e.py** — End-to-end pipeline tests covering all 10 NICE guidelines (11 test cases)
+
+### Test Notebooks (Colab)
+
+Three Colab notebooks in `testing/` validate the pipeline independently:
+
+| Notebook | Purpose | Requirements |
+|----------|---------|-------------|
+| `gpt_api_final_test_suite.ipynb` | Full pipeline validation using GPT-4o API | OpenAI API key |
+| `gpt_oss_20b_final_test_suite.ipynb` | Full pipeline validation using local model | A100 GPU on Colab |
+| `medical_chatbot_triage_testing.ipynb` | Triage urgency assessment + red flag detection | OpenAI API key |
+
+**Test coverage:** variable extraction (30 cases), multi-turn clarification (10 cases), recommendation formatting (10 cases), error handling (10 cases).
+
+**Latest API results:** 10/10 pipeline success, 85% extraction accuracy, 96.2% overall score.
 
 ## Environment Variables
 
@@ -262,6 +350,9 @@ Latest API results: 10/10 pipeline success, 85% extraction accuracy, 96.2% overa
 | OPENAI_API_KEY | Yes | — | OpenAI API key for LLM features |
 | OPENAI_MODEL | No | gpt-4o | OpenAI model to use |
 | CORS_ORIGINS | No | * | Comma-separated allowed origins |
+| LLM_MODE | No | api | `api` for OpenAI, `local` for local model |
+| LOCAL_MODEL_URL | No | — | OpenAI-compatible endpoint for local model |
+| LOCAL_MODEL_NAME | No | gpt-oss-20b | Local model name |
 
 ### Frontend (`.env.local`)
 
